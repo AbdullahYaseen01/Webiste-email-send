@@ -6,7 +6,7 @@
   <title>Reachly</title>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=7">
+  <link rel="stylesheet" href="/css/style.css?v=8">
   <link rel="stylesheet" href="/css/features.css?v=3">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
@@ -37,6 +37,10 @@
           <span class="nav-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
           <span class="nav-label">Contacts</span>
         </a>
+        <a href="#" class="nav-link" data-page="follow-up">
+          <span class="nav-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></span>
+          <span class="nav-label">Follow-up</span>
+        </a>
         <p class="nav-section">Setup</p>
         <a href="#" class="nav-link" data-page="email-config">
           <span class="nav-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></span>
@@ -61,6 +65,7 @@
             <span class="live-dot hidden" id="liveDot"></span>
             <span class="badge" id="senderBadge">Idle</span>
             <button class="btn btn-sm" id="toggleSender">Start Sender</button>
+            <button class="btn btn-sm btn-danger" id="clearHistoryBtn">Clear history</button>
           </div>
         </header>
 
@@ -314,9 +319,9 @@
         <div class="card quickstart-card">
           <h2>3-Step Campaign</h2>
           <ol class="quickstart-steps">
-            <li id="step1"><strong>Select email account</strong> — one inbox, or All accounts to split evenly</li>
-            <li id="step2"><strong>Upload data file</strong> — Contacts tab → pick List 1 or List 2</li>
-            <li id="step3"><strong>Preview → Test → Send</strong> — check preview, test, then launch (both accounts can send at once)</li>
+            <li id="step1"><strong>Select email account</strong> — pick All accounts so 5 inboxes split the work</li>
+            <li id="step2"><strong>Upload CSV</strong> — Contacts tab splits 1,000 emails evenly across all inboxes</li>
+            <li id="step3"><strong>Preview → Test → Send</strong> — if one inbox hits its daily limit, remaining mail moves to the next</li>
           </ol>
         </div>
 
@@ -411,10 +416,10 @@
 
                 <div class="compose-attachment">
                   <label class="attach-btn">
-                    📎 Attach Resume (optional)
+                    📎 Extra file (optional)
                     <input type="file" id="campaignAttachment" accept=".pdf,.doc,.docx" hidden>
                   </label>
-                  <span class="hint" id="attachmentName">PDF or Word — max 25 MB</span>
+                  <span class="hint" id="attachmentName">Resume is attached automatically on every email</span>
                 </div>
 
                 <div class="compose-options">
@@ -513,7 +518,7 @@
             <button class="btn" id="addContactBtn">+ Add Contact</button>
             <button class="btn btn-danger btn-sm" id="clearContacts">Clear List</button>
           </div>
-          <p class="hint" id="uploadSplitHint" style="margin:8px 0 0;">Uploads split evenly across both lists so each inbox sends the same volume.</p>
+          <p class="hint" id="uploadSplitHint" style="margin:8px 0 0;">Uploads split evenly across all sending accounts (e.g. 1,000 emails → 200 per inbox if you have 5).</p>
 
           <div class="table-wrap">
             <table>
@@ -532,6 +537,62 @@
             </table>
           </div>
           <div class="pagination" id="contactsPagination"></div>
+        </div>
+      </section>
+
+      <!-- Follow-up -->
+      <section id="page-follow-up" class="page">
+        <header class="page-header">
+          <h1>Follow-up</h1>
+        </header>
+
+        <div class="card">
+          <h2>Follow-up message</h2>
+          <p class="hint">This is the email that goes out. Add your calendar link so they can pick a time for a call.</p>
+          <div class="form-group" style="margin:14px 0 16px">
+            <label for="followUpCalendarLink">Calendar link</label>
+            <div class="toolbar" style="gap:8px;align-items:center">
+              <input type="url" id="followUpCalendarLink" class="select-input" placeholder="https://calendly.com/your-name/15min" style="flex:1">
+              <button type="button" class="btn btn-primary" id="saveFollowUpCalendar">Save link</button>
+            </div>
+            <p class="hint" style="margin:6px 0 0">Paste Calendly, Google Calendar appointment, or any booking URL. It is written as a plain link in the email.</p>
+          </div>
+          <div class="preview-inbox" id="followUpSubjectRow">
+            <div class="preview-inbox-row"><span class="preview-label">Subject</span><span id="followUpSubjectPreview">—</span></div>
+          </div>
+          <div class="preview-body-wrap follow-up-message-wrap">
+            <iframe id="followUpMessageFrame" class="preview-frame" title="Follow-up email preview"></iframe>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>CSV follow-up</h2>
+          <p class="hint">Upload the same (or a subset) CSV. Only people who already received your first email are queued. Each follow-up sends from the <strong>same inbox</strong> that sent their first message. New addresses that never got mail are skipped.</p>
+          <div class="toolbar" style="margin-top:16px">
+            <label class="btn btn-primary file-btn">
+              Upload follow-up CSV
+              <input type="file" id="followUpCsvUpload" accept=".csv,.xlsx,.xls" hidden>
+            </label>
+            <button type="button" class="btn btn-success" id="sendFollowUpCsv" disabled>Send Follow-up</button>
+          </div>
+          <p class="hint" id="followUpFileName" style="margin:8px 0 0;">CSV or Excel — email column required</p>
+        </div>
+
+        <div class="card hidden" id="followUpPreviewCard">
+          <h2>Match preview</h2>
+          <div id="followUpStats" class="list-summary"></div>
+          <div class="table-wrap" style="margin-top:12px">
+            <table>
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Name</th>
+                  <th>Original inbox</th>
+                </tr>
+              </thead>
+              <tbody id="followUpSampleTable"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 

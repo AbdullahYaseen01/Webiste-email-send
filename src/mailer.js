@@ -9,6 +9,7 @@ const {
   generatePersonalizedClosing,
   generatePersonalizedSubject,
 } = require('./personalize-opener');
+const { mergeAttachments } = require('./default-attachment');
 
 const transporters = {};
 const accountTimers = {};
@@ -143,7 +144,11 @@ function buildEmailContent(campaign, contact, accountId) {
   const preheader = personalize(campaign.preheader || '', contact, extras);
 
   // Always include a soft opt-out line — helps inbox trust on cold outreach
-  const html = wrapHtmlEmail(rawHtml, { preheader, fromEmail: cfg.from || true });
+  const html = wrapHtmlEmail(rawHtml, {
+    preheader,
+    fromEmail: cfg.from || true,
+    includeUnsubscribe: campaign.include_unsubscribe === true,
+  });
 
   const plainSource = campaign.body_text || htmlToPlain(rawHtml);
   const text = personalize(plainSource, contact, extras);
@@ -251,12 +256,8 @@ async function sendOneEmail(campaign, contact, accountId) {
     mailOptions.headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
   }
 
-  if (campaign.attachment?.path && fs.existsSync(campaign.attachment.path)) {
-    mailOptions.attachments = [{
-      filename: campaign.attachment.filename,
-      path: campaign.attachment.path,
-    }];
-  }
+  const attachments = mergeAttachments(campaign.attachment);
+  if (attachments.length) mailOptions.attachments = attachments;
 
   const timeoutMs = parseInt(process.env.SEND_TIMEOUT_MS || '60000', 10);
   await Promise.race([
@@ -418,6 +419,20 @@ async function processNextEmailForAccount(accountId) {
     if (classified.stopDay) {
       markAccountDailyQuotaHit(accountId);
       stopAccountSender(accountId);
+      if (item.is_follow_up) {
+        store.deferQueueItem(item.queue_id, classified.message);
+        const bulk = redistributeFromExhaustedAccount(accountId, 'Daily limit on inbox');
+        console.warn(`⏳ [${accountId}] Follow-up for ${item.email} waits on the same inbox until tomorrow`);
+        return {
+          success: false,
+          email: item.email,
+          retry: true,
+          redistributed: bulk.moved || 0,
+          error: classified.message,
+          accountId,
+          stopDay: true,
+        };
+      }
       // Prefer explicit single-item failover for this recipient, then drain the rest of the inbox queue.
       const nextId = tryFailoverToNextAccount(item, accountId, 'Daily limit on inbox');
       const bulk = redistributeFromExhaustedAccount(accountId, 'Daily limit on inbox');
@@ -444,9 +459,11 @@ async function processNextEmailForAccount(accountId) {
       const pauseMs = Math.min(backoff, 1800000);
       pauseSenderForAccount(accountId, pauseMs, classified.message);
 
-      const nextId = tryFailoverToNextAccount(item, accountId, classified.message);
-      if (nextId) {
-        return { success: false, email: item.email, retry: true, failover: nextId, error: classified.message, accountId };
+      if (!item.is_follow_up) {
+        const nextId = tryFailoverToNextAccount(item, accountId, classified.message);
+        if (nextId) {
+          return { success: false, email: item.email, retry: true, failover: nextId, error: classified.message, accountId };
+        }
       }
 
       const retries = store.getQueueRetries(item.queue_id);
@@ -462,20 +479,24 @@ async function processNextEmailForAccount(accountId) {
       pauseSenderForAccount(accountId, pauseMs, classified.message);
       if (acc?.protected) state.blockedUntil = Date.now() + pauseMs;
 
-      const nextId = tryFailoverToNextAccount(item, accountId, classified.message);
-      if (nextId) {
-        console.error(`⛔ [${accountId}] Blocked — recipient moved to ${nextId}`);
-        return { success: false, email: item.email, retry: true, failover: nextId, error: classified.message, accountId };
+      if (!item.is_follow_up) {
+        const nextId = tryFailoverToNextAccount(item, accountId, classified.message);
+        if (nextId) {
+          console.error(`⛔ [${accountId}] Blocked — recipient moved to ${nextId}`);
+          return { success: false, email: item.email, retry: true, failover: nextId, error: classified.message, accountId };
+        }
       }
       store.requeueItem(item.queue_id, classified.message);
-      console.error(`⛔ [${accountId}] Blocked — no failover for ${item.email}`);
+      console.error(`⛔ [${accountId}] Blocked — ${item.is_follow_up ? 'follow-up stays on this inbox' : 'no failover'} for ${item.email}`);
       return { success: false, email: item.email, error: classified.message, accountId };
     }
 
-    // Other failures: try next inbox before marking failed
-    const nextId = tryFailoverToNextAccount(item, accountId, err.message || classified.message);
-    if (nextId) {
-      return { success: false, email: item.email, retry: true, failover: nextId, error: err.message, accountId };
+    // Other failures: try next inbox before marking failed (follow-ups stay on the original inbox)
+    if (!item.is_follow_up) {
+      const nextId = tryFailoverToNextAccount(item, accountId, err.message || classified.message);
+      if (nextId) {
+        return { success: false, email: item.email, retry: true, failover: nextId, error: err.message, accountId };
+      }
     }
 
     store.markFailed(item.queue_id, item.campaign_id, item.contact_id, item.email, err.message, classified.type, meta);

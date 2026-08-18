@@ -623,6 +623,175 @@ function getSuccessfulContactIds(campaignId) {
   });
 }
 
+function isFollowUpCampaign(data, campaignId) {
+  const camp = data.campaigns.find(c => c.id === campaignId);
+  return camp?.campaign_type === 'follow_up';
+}
+
+function queueItemEmail(data, q) {
+  return q.email || data.contacts.find(c => c.id === q.contact_id)?.email || '';
+}
+
+/** First successful non-follow-up send per email → original SMTP inbox. */
+function buildOriginalAccountByEmail(data) {
+  const map = new Map();
+
+  const consider = (email, smtpAccountId, campaignId, isFollowUpFlag) => {
+    if (!email || !smtpAccountId) return;
+    const key = String(email).toLowerCase();
+    const follow = !!isFollowUpFlag || isFollowUpCampaign(data, campaignId);
+    if (follow) return;
+    if (!map.has(key)) map.set(key, smtpAccountId);
+  };
+
+  for (const log of data.send_log) {
+    if (log.status !== 'sent') continue;
+    consider(log.email, log.smtp_account_id, log.campaign_id, log.is_follow_up);
+  }
+  for (const q of data.send_queue) {
+    if (q.status !== 'sent') continue;
+    consider(queueItemEmail(data, q), q.smtp_account_id, q.campaign_id, q.is_follow_up);
+  }
+  return map;
+}
+
+function hasFollowUpForEmail(data, emailLower) {
+  for (const log of data.send_log) {
+    if (log.status !== 'sent' || !log.email) continue;
+    if (String(log.email).toLowerCase() !== emailLower) continue;
+    if (log.is_follow_up || isFollowUpCampaign(data, log.campaign_id)) return true;
+  }
+  for (const q of data.send_queue) {
+    if (!['sent', 'pending'].includes(q.status)) continue;
+    const email = queueItemEmail(data, q);
+    if (!email || String(email).toLowerCase() !== emailLower) continue;
+    if (q.is_follow_up || isFollowUpCampaign(data, q.campaign_id)) return true;
+  }
+  return false;
+}
+
+function findContactByEmail(data, emailLower) {
+  return data.contacts.find(c => c.email.toLowerCase() === emailLower && c.status === 'active')
+    || data.contacts.find(c => c.email.toLowerCase() === emailLower)
+    || null;
+}
+
+/**
+ * Match a follow-up CSV to the inbox that originally delivered each address.
+ */
+function matchFollowUpCsv(rows) {
+  return withStoreRead((data) => {
+    const originalByEmail = buildOriginalAccountByEmail(data);
+    const matched = [];
+    const neverSent = [];
+    const alreadyFollowed = [];
+    const bounced = [];
+    const invalid = [];
+    const seen = new Set();
+    const byAccount = {};
+
+    for (const row of rows || []) {
+      const email = String(row.email || '').trim().toLowerCase();
+      if (!email || !email.includes('@')) {
+        if (row.email) invalid.push(String(row.email));
+        continue;
+      }
+      if (seen.has(email)) continue;
+      seen.add(email);
+
+      if (hasFollowUpForEmail(data, email)) {
+        alreadyFollowed.push(email);
+        continue;
+      }
+
+      const smtpAccountId = originalByEmail.get(email);
+      if (!smtpAccountId) {
+        neverSent.push(email);
+        continue;
+      }
+
+      const contact = findContactByEmail(data, email);
+      if (contact && contact.status && contact.status !== 'active') {
+        bounced.push(email);
+        continue;
+      }
+
+      matched.push({
+        email,
+        contactId: contact?.id || null,
+        smtpAccountId,
+        first_name: row.first_name || contact?.first_name || '',
+        last_name: row.last_name || contact?.last_name || '',
+        name: row.name || contact?.name || '',
+        company: row.company || contact?.company || '',
+        title: row.title || contact?.title || '',
+        website: row.website || contact?.website || '',
+        linkedin: row.linkedin || contact?.linkedin || '',
+      });
+      byAccount[smtpAccountId] = (byAccount[smtpAccountId] || 0) + 1;
+    }
+
+    return {
+      matched,
+      neverSent,
+      alreadyFollowed,
+      bounced,
+      invalid,
+      unique: seen.size,
+      ready: matched.length,
+      byAccount,
+    };
+  });
+}
+
+/**
+ * Create missing contacts for CSV follow-up and return ids + sticky inbox map.
+ */
+function prepareFollowUpRecipients(matchedRows, listByAccount = {}) {
+  return withStore((data) => {
+    const contactIds = [];
+    const stickyAccountByContact = {};
+
+    for (const row of matchedRows || []) {
+      const email = String(row.email || '').trim().toLowerCase();
+      if (!email) continue;
+
+      let contact = row.contactId
+        ? data.contacts.find(c => c.id === row.contactId)
+        : findContactByEmail(data, email);
+
+      if (!contact) {
+        const listId = listByAccount[row.smtpAccountId] || 'list1';
+        contact = {
+          id: nextId(data, 'contacts'),
+          email,
+          name: row.name || '',
+          first_name: row.first_name || '',
+          last_name: row.last_name || '',
+          company: row.company || '',
+          title: row.title || '',
+          website: row.website || '',
+          linkedin: row.linkedin || '',
+          city: '',
+          country: '',
+          industry: '',
+          company_profile: '',
+          list_id: listId,
+          status: 'active',
+          created_at: now(),
+        };
+        data.contacts.push(contact);
+      }
+
+      if (contact.status !== 'active') continue;
+      contactIds.push(contact.id);
+      stickyAccountByContact[contact.id] = row.smtpAccountId;
+    }
+
+    return { contactIds, stickyAccountByContact };
+  });
+}
+
 function getCampaignSentCount(campaignId) {
   return withStoreRead((data) => {
     const camp = data.campaigns.find(c => c.id === campaignId);
@@ -705,6 +874,55 @@ function updateCampaign(id, fields) {
   });
 }
 
+function deleteCampaign(id) {
+  return withStore((data) => {
+    const campaign = data.campaigns.find(c => c.id === id);
+    if (!campaign) return null;
+
+    const pendingRemoved = data.send_queue.filter(
+      q => q.campaign_id === id && q.status === 'pending'
+    ).length;
+
+    data.send_queue = data.send_queue.filter(q => q.campaign_id !== id);
+    data.campaigns = data.campaigns.filter(c => c.id !== id);
+
+    return {
+      id,
+      name: campaign.name,
+      pendingRemoved,
+    };
+  });
+}
+
+function clearSendingHistory() {
+  return withStore((data) => {
+    const summary = {
+      campaigns: (data.campaigns || []).length,
+      queue: (data.send_queue || []).length,
+      logs: (data.send_log || []).length,
+      replies: (data.replies || []).length,
+    };
+    data.campaigns = [];
+    data.send_queue = [];
+    data.send_log = [];
+    data.replies = [];
+    data._counters = {
+      ...(data._counters || {}),
+      campaigns: 0,
+      send_queue: 0,
+      send_log: 0,
+      replies: 0,
+    };
+    data.meta = {
+      ...(data.meta || {}),
+      userStoppedSender: true,
+      lastDailyLimitAt: null,
+      accountQuotas: {},
+    };
+    return summary;
+  });
+}
+
 function setCampaignStatus(id, status) {
   withStore((data) => {
     const c = data.campaigns.find(c => c.id === id);
@@ -722,6 +940,7 @@ function queueCampaign(campaignId, contactIds, {
   allowResend = false,
   smtpAccountIds = null,
   listAccountMap = null,
+  stickyAccountByContact = null,
 } = {}) {
   return withStore((data) => {
     const camp = data.campaigns.find(c => c.id === campaignId);
@@ -732,8 +951,13 @@ function queueCampaign(campaignId, contactIds, {
     let rotateIndex = 0;
     let added = 0;
 
+    const stickyMap = stickyAccountByContact && typeof stickyAccountByContact === 'object'
+      ? stickyAccountByContact
+      : null;
+
     // Sticky follow-up: same SMTP account that delivered the first email
     const parentAccountByContact = new Map();
+    const originalByEmail = isFollowUp ? buildOriginalAccountByEmail(data) : new Map();
     if (isFollowUp && camp?.parent_campaign_id) {
       const parentId = camp.parent_campaign_id;
       for (const log of data.send_log) {
@@ -780,8 +1004,14 @@ function queueCampaign(campaignId, contactIds, {
 
       let smtpAccountId = camp?.smtp_account_id || 'account1';
       if (isFollowUp) {
-        // Always reuse the inbox that sent the first email
-        smtpAccountId = parentAccountByContact.get(contactId) || accountPool?.[0] || 'account1';
+        // Always reuse the inbox that sent the first email (CSV or parent campaign)
+        const emailKey = String(contact.email || '').toLowerCase();
+        smtpAccountId = stickyMap?.[contactId]
+          || stickyMap?.[String(contactId)]
+          || parentAccountByContact.get(contactId)
+          || originalByEmail.get(emailKey)
+          || accountPool?.[0]
+          || 'account1';
         if (smtpAccountId === 'all') smtpAccountId = accountPool?.[0] || 'account1';
       } else {
         // Prefer inbox mapped to this contact's list (works for saved Hostinger ids too)
@@ -859,6 +1089,7 @@ function getPendingQueue(limit, accountId = null) {
         preheader: camp.preheader || '', include_unsubscribe: camp.include_unsubscribe === true,
         attachment: camp.attachment || null,
         campaign_name: camp.name,
+        is_follow_up: !!(q.is_follow_up || camp.campaign_type === 'follow_up'),
       });
     }
     return result;
@@ -919,8 +1150,7 @@ function failoverQueueItem(queueId, fromAccountId, errorMessage, candidateAccoun
 
 /**
  * Pure helper: reassign pending queue rows from an exhausted inbox onto healthy candidates.
- * Prefer accounts not yet tried for that recipient; fall back to any candidate so the day is not stuck.
- * Follow-ups are included — sticky assignment applies at queue time, not when the sticky inbox is out of quota.
+ * Initial campaign sends move to the next inbox. Follow-ups stay on the original inbox.
  */
 function applyPendingRedistribution(data, fromAccountId, candidateAccountIds = [], { reason = null } = {}) {
   const candidates = [...new Set((candidateAccountIds || []).filter(id => id && id !== fromAccountId))];
@@ -935,6 +1165,7 @@ function applyPendingRedistribution(data, fromAccountId, candidateAccountIds = [
 
     const camp = data.campaigns.find(c => c.id === q.campaign_id);
     if (!camp || !['sending', 'queued'].includes(camp.status)) continue;
+    if (q.is_follow_up || camp.campaign_type === 'follow_up') continue;
 
     const smtpId = q.smtp_account_id || camp.smtp_account_id || 'account1';
     if (smtpId !== fromAccountId) continue;
@@ -1508,9 +1739,10 @@ function markBounce(email, reason = 'Delivery failed') {
 module.exports = {
   getContacts, addContact, addContactsBulk, addContactsBulkSplit, deleteContact, deleteAllContacts,
   getActiveContactIds, getEligibleContactIds, getSuccessfulContactIds, getSentAccountForContact,
+  matchFollowUpCsv, prepareFollowUpRecipients,
   getCampaignSentCount, getContactCounts, getAllListCounts,
   suppressContact, getSentEmailsForList, getGloballySentEmails,
-  getCampaigns, getCampaign, createCampaign, updateCampaign, setCampaignStatus, getCampaignsByStatus,
+  getCampaigns, getCampaign, createCampaign, updateCampaign, deleteCampaign, clearSendingHistory, setCampaignStatus, getCampaignsByStatus,
   queueCampaign, getPendingQueue, getPendingCount, getQueueRetries, requeueItem, failoverQueueItem,
   applyPendingRedistribution, redistributePendingFromAccount, getTriedAccounts, deferQueueItem,
   deferBlockedQueueItems, getAccountQuotaState, setAccountQuotaState,

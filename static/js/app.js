@@ -6,7 +6,7 @@ let quillEditor = null;
 let charts = {};
 let lastSenderRunning = false;
 let selectedListId = 'list1';
-let selectedAccountId = 'account2';
+let selectedAccountId = 'all';
 let loadedTemplateVersion = 0;
 let accountsData = [];
 let editingCampaignId = null;
@@ -71,6 +71,7 @@ function showPage(page) {
   if (page === 'dashboard') loadDashboard();
   if (page === 'compose') loadComposePage();
   if (page === 'contacts') loadContacts();
+  if (page === 'follow-up') loadFollowUpPage();
   if (page === 'campaigns') loadCampaigns();
   if (page === 'email-config') loadEmailConfig();
   if (page === 'lead-research') loadLeadResearch();
@@ -696,6 +697,20 @@ document.getElementById('toggleSender').addEventListener('click', async () => {
   }
 });
 
+document.getElementById('clearHistoryBtn')?.addEventListener('click', async () => {
+  if (!confirm('Clear all campaign history on the dashboard?\n\nThis removes campaigns, the send queue, activity, and errors.\nContacts and email accounts are kept.')) {
+    return;
+  }
+  try {
+    const result = await api('/history/clear', { method: 'POST' });
+    toast(result.message || 'History cleared');
+    loadDashboard();
+    loadCampaigns();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
 // --- Compose ---
 
 async function loadAccounts() {
@@ -1081,7 +1096,7 @@ function getComposeFormData() {
 function buildFormData(data) {
   const acc = getSelectedAccount();
   const formData = new FormData();
-  formData.append('name', data.name || 'Clipzy — YouTuber outreach');
+  formData.append('name', data.name || 'Abdullah Yaseen — service outreach');
   formData.append('subject', data.subject);
   formData.append('body', data.body);
   formData.append('preheader', data.preheader);
@@ -1117,14 +1132,14 @@ async function saveCampaign(andSend) {
     return;
   }
 
-  // Always pull latest Clipzy template so bold + copy survive Quill/editor cache
+  // Always pull latest template so bold + copy survive Quill/editor cache
   try {
     const tpl = await api('/campaigns/templates/default');
     if (tpl?.body_html) {
       setEditorHtml(tpl.body_html);
       document.getElementById('campaignSubject').value = tpl.subject;
       document.getElementById('campaignPreheader').value = tpl.preheader || '';
-      document.getElementById('campaignName').value = tpl.name || 'Clipzy — YouTuber outreach';
+      document.getElementById('campaignName').value = tpl.name || 'Abdullah Yaseen — service outreach';
       templateLoaded = true;
       loadedTemplateVersion = tpl.version || 0;
     }
@@ -1135,7 +1150,7 @@ async function saveCampaign(andSend) {
   }
 
   const data = getComposeFormData();
-  const name = document.getElementById('campaignName')?.value.trim() || 'Clipzy — YouTuber outreach';
+  const name = document.getElementById('campaignName')?.value.trim() || 'Abdullah Yaseen — service outreach';
 
   if (!data.subject || !getEditorText()) {
     toast('Click "Load Default Email" first', 'error');
@@ -1159,7 +1174,11 @@ async function saveCampaign(andSend) {
     return;
   }
 
-  if (andSend && !confirm(`Send campaign from ${acc?.email} to ${activeCount.toLocaleString()} contacts?\n\nDuplicates & bounced addresses will be skipped.\nLimit: ${acc?.dailyLimit}/day`)) {
+  if (andSend && !confirm(
+    selectedAccountId === 'all'
+      ? `Send from all ${accountsData.length} inboxes to ${activeCount.toLocaleString()} contacts?\n\nCSV is split across accounts. If one inbox hits its daily limit, remaining emails move to the next inbox.\nCombined limit: ${acc?.dailyLimit}/day`
+      : `Send campaign from ${acc?.email} to ${activeCount.toLocaleString()} contacts?\n\nDuplicates & bounced addresses will be skipped.\nLimit: ${acc?.dailyLimit}/day`
+  )) {
     return;
   }
 
@@ -1233,7 +1252,7 @@ function renderListSummary(lists) {
   const hint = document.getElementById('uploadSplitHint');
   if (hint) {
     hint.textContent = accountsData.length > 1
-      ? `Uploads split evenly across ${accountsData.length} lists so each inbox sends the same volume.`
+      ? `Uploads split evenly across ${accountsData.length} inboxes (1,000 emails → about ${Math.ceil(1000 / accountsData.length)} each). If one inbox hits its daily limit, remaining mail moves to the next.`
       : '';
   }
 }
@@ -1407,23 +1426,24 @@ function campaignActions(c) {
   const followUpBtn = (c.sent_count > 0 && c.campaign_type !== 'follow_up')
     ? `<button class="btn btn-sm btn-3d btn-follow" onclick="createFollowUp(${c.id})" title="Send follow-up to successful recipients">Follow-up</button>`
     : '';
+  const deleteBtn = `<button class="btn btn-sm btn-danger btn-3d" onclick="deleteCampaign(${c.id})" title="Delete campaign">Delete</button>`;
   if (c.status === 'draft') {
-    return `<button class="btn btn-sm btn-success btn-3d" onclick="sendCampaign(${c.id})">Send</button>${followUpBtn}`;
+    return `<button class="btn btn-sm btn-success btn-3d" onclick="sendCampaign(${c.id})">Send</button>${followUpBtn}${deleteBtn}`;
   }
   if (c.status === 'paused') {
     return `<button class="btn btn-sm btn-3d" onclick="editCampaign(${c.id})">Edit</button>
       <button class="btn btn-sm btn-primary btn-3d" onclick="resumeCampaign(${c.id})">Resume</button>
-      ${followUpBtn}`;
+      ${followUpBtn}${deleteBtn}`;
   }
   if (c.status === 'sending' || c.status === 'queued') {
     return `<button class="btn btn-sm btn-3d" onclick="pauseAndEditCampaign(${c.id})">Pause &amp; Edit</button>
       <button class="btn btn-sm btn-3d" onclick="pauseCampaign(${c.id})">Pause</button>
-      ${followUpBtn}`;
+      ${followUpBtn}${deleteBtn}`;
   }
   if (c.status === 'completed') {
-    return followUpBtn || '—';
+    return `${followUpBtn}${deleteBtn}`;
   }
-  return followUpBtn || '—';
+  return `${followUpBtn}${deleteBtn}`;
 }
 
 async function createFollowUp(id) {
@@ -1436,9 +1456,13 @@ async function createFollowUp(id) {
     if (!confirm(`Create follow-up for ${preview.eligible.toLocaleString()} people who received campaign #${id}?\n\nEach follow-up sends from the same inbox as the first email.\nOnly successful recipients are included.`)) {
       return;
     }
+    const calendarInput = document.getElementById('followUpCalendarLink');
     const result = await api(`/campaigns/${id}/follow-up`, {
       method: 'POST',
-      body: JSON.stringify({ send_now: true }),
+      body: JSON.stringify({
+        send_now: true,
+        calendar_link: calendarInput?.value || '',
+      }),
     });
     toast(result.message);
     loadCampaigns();
@@ -1473,7 +1497,7 @@ async function editCampaign(id) {
 
     const attachLabel = campaign.attachment?.filename
       ? `${campaign.attachment.filename} (on server — upload a new file to replace)`
-      : 'Max 25 MB';
+      : 'Resume is attached automatically on every email';
     document.getElementById('attachmentName').textContent = attachLabel;
 
     const banner = document.getElementById('editCampaignBanner');
@@ -1589,6 +1613,24 @@ async function pauseCampaign(id) {
   }
 }
 
+async function deleteCampaign(id) {
+  if (!confirm('Delete this campaign?\n\nRemaining queued emails will be removed. Already-sent emails stay in history.')) {
+    return;
+  }
+  try {
+    const result = await api(`/campaigns/${id}`, { method: 'DELETE' });
+    toast(result.message || 'Campaign deleted');
+    if (editingCampaignId === id) {
+      editingCampaignId = null;
+      document.getElementById('editCampaignBanner')?.classList.add('hidden');
+    }
+    loadCampaigns();
+    loadDashboard();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
 async function resumeCampaign(id) {
   try {
     await api(`/campaigns/${id}/resume`, { method: 'POST' });
@@ -1666,6 +1708,138 @@ function debounce(fn, ms) {
     timer = setTimeout(() => fn(...args), ms);
   };
 }
+
+// --- Follow-up CSV ---
+
+let followUpFile = null;
+let followUpPreview = null;
+
+function applyFollowUpMessage(data) {
+  const subjectEl = document.getElementById('followUpSubjectPreview');
+  const frame = document.getElementById('followUpMessageFrame');
+  const calendarInput = document.getElementById('followUpCalendarLink');
+  if (calendarInput && data.calendar_link != null && calendarInput !== document.activeElement) {
+    calendarInput.value = data.calendar_link;
+  }
+  if (subjectEl) subjectEl.textContent = data.preview?.subject || data.subject || '—';
+  if (frame) frame.srcdoc = data.preview?.html || data.body_html || '';
+}
+
+async function loadFollowUpPage() {
+  try {
+    const data = await api('/follow-up/message');
+    applyFollowUpMessage(data);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function saveFollowUpCalendar() {
+  const raw = document.getElementById('followUpCalendarLink')?.value || '';
+  try {
+    const data = await api('/follow-up/calendar', {
+      method: 'PUT',
+      body: JSON.stringify({ url: raw }),
+    });
+    applyFollowUpMessage(data);
+    toast(data.calendar_link ? 'Calendar link saved — it will appear in the follow-up' : 'Calendar link cleared');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+document.getElementById('saveFollowUpCalendar')?.addEventListener('click', saveFollowUpCalendar);
+document.getElementById('followUpCalendarLink')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    saveFollowUpCalendar();
+  }
+});
+
+function renderFollowUpPreview(data) {
+  const card = document.getElementById('followUpPreviewCard');
+  const stats = document.getElementById('followUpStats');
+  const tbody = document.getElementById('followUpSampleTable');
+  if (!card || !stats || !tbody) return;
+
+  card.classList.remove('hidden');
+  const byAccount = (data.byAccount || [])
+    .map(a => `${escapeHtml(a.email || a.id)}: ${a.count}`)
+    .join(' · ') || '—';
+  stats.innerHTML = `<strong>${(data.ready || 0).toLocaleString()} ready</strong>
+    · skipped never sent: ${(data.neverSent || []).length}
+    · already followed: ${(data.alreadyFollowed || []).length}
+    · bounced: ${(data.bounced || []).length}
+    <br>Same original inbox: ${byAccount}`;
+
+  const sample = data.sample || [];
+  if (sample.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No matching people who already received a first email.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = sample.map(row => {
+    const acc = accountsData.find(a => a.id === row.smtpAccountId);
+    return `<tr>
+      <td>${escapeHtml(row.email)}</td>
+      <td>${escapeHtml(row.name || row.first_name || '—')}</td>
+      <td>${escapeHtml(acc?.email || row.smtpAccountId)}</td>
+    </tr>`;
+  }).join('');
+}
+
+document.getElementById('followUpCsvUpload')?.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  followUpFile = file;
+  document.getElementById('followUpFileName').textContent = file.name;
+
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    await loadAccounts();
+    const res = await fetch('/api/follow-up/preview', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Preview failed');
+    followUpPreview = data;
+    renderFollowUpPreview(data);
+    const sendBtn = document.getElementById('sendFollowUpCsv');
+    if (sendBtn) sendBtn.disabled = !(data.ready > 0);
+    toast(`${(data.ready || 0).toLocaleString()} ready — ${(data.neverSent || []).length} never received a first email`);
+  } catch (err) {
+    toast(err.message, 'error');
+    document.getElementById('sendFollowUpCsv').disabled = true;
+  }
+  e.target.value = '';
+});
+
+document.getElementById('sendFollowUpCsv')?.addEventListener('click', async () => {
+  if (!followUpFile || !(followUpPreview?.ready > 0)) {
+    toast('Upload a follow-up CSV first', 'error');
+    return;
+  }
+  if (!confirm(`Send follow-up to ${followUpPreview.ready.toLocaleString()} people?\n\nEach follow-up goes from the same inbox that sent their first email.`)) {
+    return;
+  }
+
+  const btn = document.getElementById('sendFollowUpCsv');
+  btn.disabled = true;
+  const formData = new FormData();
+  formData.append('file', followUpFile);
+  formData.append('calendar_link', document.getElementById('followUpCalendarLink')?.value || '');
+  try {
+    const res = await fetch('/api/follow-up/send', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Send failed');
+    toast(data.message || `Queued ${data.queued} follow-ups`);
+    followUpFile = null;
+    followUpPreview = null;
+    document.getElementById('followUpFileName').textContent = 'CSV or Excel — email column required';
+    showPage('dashboard');
+  } catch (err) {
+    toast(err.message, 'error');
+    btn.disabled = false;
+  }
+});
 
 // Auto-refresh — every 2 seconds on dashboard for live monitoring
 function startAutoRefresh() {

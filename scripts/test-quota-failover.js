@@ -37,7 +37,7 @@ function testInitialSendsMoveToHealthyInbox() {
   console.log('✓ initial sends redistribute across healthy inboxes');
 }
 
-function testFollowUpsAlsoMoveWhenStickyInboxExhausted() {
+function testFollowUpsStayOnOriginalInbox() {
   const data = makeData([
     {
       id: 10,
@@ -46,12 +46,19 @@ function testFollowUpsAlsoMoveWhenStickyInboxExhausted() {
       smtp_account_id: 'account1',
       is_follow_up: true,
     },
+    {
+      id: 11,
+      campaign_id: 1,
+      status: 'pending',
+      smtp_account_id: 'account1',
+    },
   ]);
 
   const result = applyPendingRedistribution(data, 'account1', ['account2']);
   assert.strictEqual(result.moved, 1);
-  assert.strictEqual(data.send_queue[0].smtp_account_id, 'account2');
-  console.log('✓ follow-ups move when sticky inbox is out of quota (campaign not stuck)');
+  assert.strictEqual(data.send_queue[0].smtp_account_id, 'account1');
+  assert.strictEqual(data.send_queue[1].smtp_account_id, 'account2');
+  console.log('✓ follow-ups stay on the original inbox when quota is hit');
 }
 
 function testNoCandidatesLeavesQueueUntouched() {
@@ -131,7 +138,7 @@ function testClearsDeferredUntil() {
 }
 
 testInitialSendsMoveToHealthyInbox();
-testFollowUpsAlsoMoveWhenStickyInboxExhausted();
+testFollowUpsStayOnOriginalInbox();
 testNoCandidatesLeavesQueueUntouched();
 testPreferUntriedThenFallback();
 testSkipsPausedCampaignsAndNonPending();

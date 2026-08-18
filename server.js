@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const { parseContactsCsv, parseContactsXlsx } = require('./src/import-contacts');
-const { getTemplate, listTemplates } = require('./src/campaign-templates');
+const { getTemplate, listTemplates, buildFollowUpHtml, normalizeCalendarUrl } = require('./src/campaign-templates');
 const path = require('path');
 const fs = require('fs');
 const cron = require('node-cron');
@@ -309,6 +309,16 @@ app.get('/api/stats', (req, res) => {
     progress,
     analytics: store.getAnalytics(),
     storage: store.getStorageInfo(),
+  });
+});
+
+app.post('/api/history/clear', (req, res) => {
+  stopSender(false);
+  const summary = store.clearSendingHistory();
+  res.json({
+    success: true,
+    summary,
+    message: 'Campaigns, queue, activity, and errors were cleared. Contacts and email accounts were kept.',
   });
 });
 
@@ -780,6 +790,30 @@ app.post('/api/campaigns/:id/resume', async (req, res) => {
   res.json({ success: true, message: 'Campaign resumed' });
 });
 
+app.delete('/api/campaigns/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  const campaign = store.getCampaign(id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+  const result = store.deleteCampaign(id);
+  const stillActive = store.getCampaigns().some(c =>
+    ['sending', 'queued'].includes(c.status)
+  );
+  if (!stillActive) {
+    store.setMeta({ userStoppedSender: true });
+    stopSender(false);
+  }
+
+  res.json({
+    success: true,
+    id,
+    pendingRemoved: result?.pendingRemoved || 0,
+    message: result?.pendingRemoved
+      ? `Campaign deleted. ${result.pendingRemoved.toLocaleString()} remaining emails removed from the queue.`
+      : 'Campaign deleted.',
+  });
+});
+
 app.post('/api/campaigns/:id/follow-up', (req, res) => {
   const parentId = parseInt(req.params.id);
   const parent = store.getCampaign(parentId);
@@ -795,7 +829,9 @@ app.post('/api/campaigns/:id/follow-up', (req, res) => {
   const { subject, body, preheader, delay_days, send_now } = req.body || {};
   const followTpl = getTemplate('follow-up');
   // Always use the latest follow-up template so bold + copy stay consistent
-  const body_html = toHtmlBody(followTpl.body_html);
+  const calendarUrl = normalizeCalendarUrl(req.body?.calendar_link || store.getMeta()?.calendar_link);
+  if (calendarUrl) store.setMeta({ calendar_link: calendarUrl });
+  const body_html = toHtmlBody(buildFollowUpHtml(calendarUrl));
   const followSubject = (subject && String(subject).trim()) || followTpl.subject;
 
   const campaign = store.createCampaign({
@@ -841,11 +877,166 @@ app.get('/api/campaigns/:id/follow-up-preview', (req, res) => {
   if (!parent) return res.status(404).json({ error: 'Campaign not found' });
   const contactIds = store.getSuccessfulContactIds(parentId);
   const tpl = getTemplate('follow-up');
+  const calendarUrl = normalizeCalendarUrl(store.getMeta()?.calendar_link);
+  const body_html = buildFollowUpHtml(calendarUrl);
   res.json({
     parent: { id: parent.id, name: parent.name, sent_count: parent.sent_count, status: parent.status },
     eligible: contactIds.length,
-    template: { subject: tpl.subject, body_html: tpl.body_html },
+    template: { subject: tpl.subject, body_html },
+    calendar_link: calendarUrl,
   });
+});
+
+app.get('/api/follow-up/message', (req, res) => {
+  const tpl = getTemplate('follow-up');
+  const calendarUrl = normalizeCalendarUrl(store.getMeta()?.calendar_link);
+  const body_html = buildFollowUpHtml(calendarUrl);
+  const accountId = getAccounts()[0]?.id || 'account1';
+  const preview = renderPreview({
+    subject: tpl.subject,
+    body_html: toHtmlBody(body_html),
+    body_text: htmlToPlain(body_html),
+    preheader: tpl.preheader || '',
+    include_unsubscribe: false,
+    campaign_type: 'follow_up',
+  }, tpl.sample_contact, accountId);
+  res.json({
+    calendar_link: calendarUrl,
+    subject: tpl.subject,
+    body_html,
+    preview,
+  });
+});
+
+app.put('/api/follow-up/calendar', (req, res) => {
+  const raw = req.body?.url ?? req.body?.calendar_link ?? '';
+  const url = normalizeCalendarUrl(raw);
+  if (String(raw).trim() && !url) {
+    return res.status(400).json({ error: 'Enter a valid calendar URL starting with https://' });
+  }
+  store.setMeta({ calendar_link: url });
+  const tpl = getTemplate('follow-up');
+  const body_html = buildFollowUpHtml(url);
+  const preview = renderPreview({
+    subject: tpl.subject,
+    body_html: toHtmlBody(body_html),
+    body_text: htmlToPlain(body_html),
+    preheader: tpl.preheader || '',
+    include_unsubscribe: false,
+    campaign_type: 'follow_up',
+  }, tpl.sample_contact, getAccounts()[0]?.id || 'account1');
+  res.json({ calendar_link: url, subject: tpl.subject, body_html, preview });
+});
+
+function parseUploadedRows(file) {
+  const ext = path.extname(file.originalname).toLowerCase();
+  if (ext === '.xlsx' || ext === '.xls') {
+    return parseContactsXlsx(fs.readFileSync(file.path));
+  }
+  return parseContactsCsv(fs.readFileSync(file.path, 'utf-8'));
+}
+
+app.post('/api/follow-up/preview', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Upload a CSV or Excel file' });
+  try {
+    const rows = parseUploadedRows(req.file);
+    fs.unlinkSync(req.file.path);
+    if (rows.length === 0) {
+      return res.status(400).json({ error: 'No valid email addresses found in file' });
+    }
+    const match = store.matchFollowUpCsv(rows);
+    const byAccount = Object.entries(match.byAccount || {}).map(([id, count]) => ({
+      id,
+      email: getAccount(id)?.email || id,
+      label: getAccount(id)?.label || id,
+      count,
+    }));
+    res.json({
+      ...match,
+      byAccount,
+      sample: match.matched.slice(0, 25),
+      totalRows: rows.length,
+    });
+  } catch (err) {
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    res.status(400).json({ error: 'Failed to parse file: ' + err.message });
+  }
+});
+
+app.post('/api/follow-up/send', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Upload a CSV or Excel file' });
+  try {
+    const rows = parseUploadedRows(req.file);
+    fs.unlinkSync(req.file.path);
+    if (rows.length === 0) {
+      return res.status(400).json({ error: 'No valid email addresses found in file' });
+    }
+
+    const match = store.matchFollowUpCsv(rows);
+    if (match.matched.length === 0) {
+      return res.status(400).json({
+        error: 'No matching emails that already received a first message from one of your inboxes.',
+        neverSent: match.neverSent.length,
+        alreadyFollowed: match.alreadyFollowed.length,
+        bounced: match.bounced.length,
+      });
+    }
+
+    const accounts = getAccounts().filter(a => a.email && a.pass);
+    const listByAccount = Object.fromEntries(accounts.map(a => [a.id, a.listId]));
+    const { contactIds, stickyAccountByContact } = store.prepareFollowUpRecipients(
+      match.matched,
+      listByAccount
+    );
+
+    if (contactIds.length === 0) {
+      return res.status(400).json({ error: 'No active contacts left to queue after matching.' });
+    }
+
+    const followTpl = getTemplate('follow-up');
+    const calendarUrl = normalizeCalendarUrl(req.body?.calendar_link || store.getMeta()?.calendar_link);
+    if (calendarUrl) store.setMeta({ calendar_link: calendarUrl });
+    const body_html = toHtmlBody(buildFollowUpHtml(calendarUrl));
+    const campaign = store.createCampaign({
+      name: `Follow-up CSV — ${new Date().toISOString().slice(0, 10)}`,
+      subject: followTpl.subject,
+      body_html,
+      body_text: htmlToPlain(body_html),
+      preheader: followTpl.preheader || '',
+      include_unsubscribe: false,
+      smtp_account_id: 'all',
+      list_id: 'all',
+      campaign_type: 'follow_up',
+    });
+
+    const queued = queueCampaign(campaign.id, contactIds, {
+      allowResend: true,
+      smtpAccountIds: accounts.map(a => a.id),
+      stickyAccountByContact,
+    });
+    startSender();
+
+    const byAccount = Object.entries(match.byAccount || {}).map(([id, count]) => ({
+      id,
+      email: getAccount(id)?.email || id,
+      count,
+    }));
+
+    res.json({
+      success: true,
+      campaignId: campaign.id,
+      queued,
+      ready: match.ready,
+      neverSent: match.neverSent.length,
+      alreadyFollowed: match.alreadyFollowed.length,
+      bounced: match.bounced.length,
+      byAccount,
+      message: `Follow-up queued to ${queued.toLocaleString()} people. Each one sends from the same inbox as their first email.`,
+    });
+  } catch (err) {
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    res.status(400).json({ error: err.message || 'Follow-up failed' });
+  }
 });
 
 app.get('/api/demo/data', (req, res) => {

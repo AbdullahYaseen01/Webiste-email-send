@@ -1,10 +1,10 @@
 /**
- * Personalized subject / opener / closing for Clipzy outreach.
- * Medium length: warm + specific, without spammy sales language.
- * Do not repeat first name right after "Hi Name,".
+ * Personalized subject / opener / closing for Abdullah Yaseen outreach.
+ * Sounds like a 1-to-1 note. No salesy or bulk-mail language.
+ * Do not repeat first name right after "Hey Name,".
  */
 
-const SITE_URL = 'https://clipzy.xynovix.com/';
+const SITE_URL = 'https://abdullah-yaseen.vercel.app/';
 
 function hashCode(str) {
   let h = 0;
@@ -26,13 +26,18 @@ function firstName(contact) {
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
-function hasChannel(contact) {
+function hasCompany(contact) {
   return Boolean(contact.company && String(contact.company).trim());
 }
 
-function channelName(contact) {
-  if (hasChannel(contact)) return contact.company.trim();
+function companyName(contact) {
+  if (hasCompany(contact)) return contact.company.trim();
   return '';
+}
+
+function possessive(name) {
+  if (!name) return '';
+  return /s$/i.test(name) ? `${name}'` : `${name}'s`;
 }
 
 function profileSnippet(profile, max = 110) {
@@ -44,114 +49,156 @@ function profileSnippet(profile, max = 110) {
   return (lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim() + '...';
 }
 
-function detectCreatorType() {
-  return 'creator';
+function contactBlob(contact) {
+  return [
+    contact.title,
+    contact.industry,
+    contact.company,
+    contact.company_profile,
+    contact.website,
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function detectServiceFit(contact) {
+  const blob = contactBlob(contact);
+  if (/\b(ai|ml|machine learning|openai|llm|computer vision|yolo|opencv|chatbot|nlp)\b/.test(blob)) {
+    return 'ai';
+  }
+  if (/\b(saas|subscription|platform|startup|product owner|product manager)\b/.test(blob)) {
+    return 'saas';
+  }
+  if (/\b(automat|python|workflow|ops|spreadsheet|scraping|script|rpa)\b/.test(blob)) {
+    return 'automation';
+  }
+  if (/\b(web|website|frontend|backend|full.?stack|react|next\.?js|ecommerce|landing)\b/.test(blob)) {
+    return 'fullstack';
+  }
+  return 'general';
+}
+
+function servicePhrase(fit) {
+  if (fit === 'ai') return 'AI features that can run in production';
+  if (fit === 'saas') return 'shipping a product people can log into';
+  if (fit === 'automation') return 'Python automation for repeat work';
+  if (fit === 'fullstack') return 'a full-stack web build';
+  return 'web, automation, AI, or product work';
 }
 
 const NAME_ONLY_OPENERS = [
-  () => `I wanted to reach out personally because a lot of creators tell us the same thing: filming is the fun part, and everything after publish is what slows them down.`,
-  () => `Hope you are doing well. I am writing because creators who publish long-form content often still spend hours turning each video into clips, captions, and posts.`,
-  () => `Quick question that comes up a lot with creators — after a long video goes live, how much time still goes into short clips and social posts?`,
-  () => `I put this note together for creators who already make strong long videos and want those same recordings to travel further across platforms.`,
-  () => `I noticed many creators leave a lot of value inside long videos. The best moments are there, but cutting and rewriting them for every platform takes too long.`,
-  () => `I am reaching out because your kind of content usually has more than one usable angle in each upload — clips, captions, and posts included.`,
-  () => `Wanted to share a cleaner content workflow. Most creators we talk to do not need more ideas. They need less manual work after each recording.`,
-  () => `I keep hearing the same bottleneck from creators: one good video, then a second full job of clipping, captioning, and posting.`,
-  () => `Hope this is relevant. I work with creators who want more reach from the videos they already film, without stacking more tools or more editing hours.`,
-  () => `I wanted to introduce Clipzy in a simple way. It is built for creators who film once and still need short-form content and posts afterward.`,
-  () => `Curious whether multi-platform content still feels heavy after each upload. That post-publish work is exactly what Clipzy was built to reduce.`,
-  () => `I am writing with a practical idea for your workflow: use the long video you already made as the source for clips, captions, and posts in one place.`,
-  () => `A lot of creators love the recording session and dislike the cleanup after. If that sounds familiar, this note may be useful.`,
-  () => `I wanted to check in about your content process. When long-form is done, turning it into short clips and posts is usually where consistency breaks.`,
-  () => `Sharing this because creators grow faster when every upload can support more than one platform — without another late-night edit session.`,
-  () => `I thought this might help if you are already filming regularly. The missing piece for many channels is a faster way to reuse each video.`,
-  () => `I wanted to share one clear goal with you: help creators spend less time rebuilding the same content after they hit publish.`,
-  () => `Hope your week is going well. I wanted to send a short note about making long-form content work harder across Shorts, Reels, and posts.`,
-  () => `I built this note around a simple creator problem: great videos, slow distribution. That gap is where a lot of time disappears.`,
-  () => `Wanted to connect because long-form creators often have unused short-form moments sitting inside every episode or video.`,
+  () => `I wanted to reach out because a lot of teams need a site, a product, or an automation, and they do not have an in-house person to ship it.`,
+  () => `Hope you are doing well. I write software for teams that need something live, not another plan.`,
+  () => `I am reaching out because I spend most of my week building web apps, automations, and AI features that actually go into production.`,
+  () => `Wanted to introduce myself. I have been shipping full-stack, Python, AI, and product work for a little over five years.`,
+  () => `I put this together for people who already know what they want built and just need someone to finish it.`,
+  () => `A lot of the work I see is stuck in docs. The idea is clear. Getting it live is the slow part.`,
+  () => `I am a full-stack and AI engineer. If you have a site, a product, or a manual process that still needs building, that is the work I take on.`,
+  () => `Hope this is relevant. I work with teams who need a live app or automation without hiring a full engineering group.`,
+  () => `I wanted to send a short note on the kind of work I ship: web apps, Python automation, AI systems, and SaaS products.`,
+  () => `Curious whether you still have a product, site, or internal workflow sitting on the backlog.`,
+  () => `I am writing because I can take a short brief and turn it into something running in production.`,
+  () => `A lot of teams stall after planning. If that sounds familiar, this may be useful.`,
+  () => `I wanted to check in about software I can help ship: interfaces, automations, and AI systems that are already in production elsewhere.`,
+  () => `Sharing this because one builder who can do the web app, the automation, and the AI layer together is often faster than assembling a team.`,
+  () => `I thought this might help if a rebuild, a product, or a Python workflow has been sitting unfinished.`,
+  () => `Hope your week is going well. I wanted to send a short note about getting a site, an automation, or an AI feature into production.`,
+  () => `I wrote this around a simple problem: good ideas, slow shipping.`,
+  () => `Wanted to connect because most companies need more than a landing page. They need something that keeps working after launch.`,
+  () => `I have been building production software for 5+ years and wanted to see if any of that work is useful for you right now.`,
+  () => `I am reaching out as a builder, not a recruiter. I ship the work myself.`,
 ];
 
 const NAME_ONLY_CLOSINGS = [
-  () => `If it looks useful, open the studio with one recent video and see whether the workflow feels right for you.`,
-  () => `No pressure at all — if cleaner repurposing would help, the link above is there whenever timing is better.`,
-  () => `I would genuinely value your feedback as a creator if you take a look.`,
-  () => `If multi-platform growth is on your list, this may save real time on the next few uploads.`,
-  () => `Start with one upload if you try it. That is usually enough to see whether it fits your process.`,
-  () => `Happy to leave this with you. If it helps even one upload feel easier, it was worth sending.`,
-  () => `If the post-publish work is still draining your schedule, Clipzy was built for exactly that.`,
-  () => `Appreciate you reading this. The studio link is above if you want to explore it.`,
-  () => `Most creators can tell quickly whether this helps once they run a real video through it.`,
-  () => `If Shorts and social posts still take longer than filming, it may be worth a look this week.`,
-  () => `Open it only if it feels relevant. Either way, thanks for your time.`,
-  () => `Hope this helps you ship more from the same filming time.`,
-  () => `If you check it out, I would like to know what you think.`,
-  () => `When you want more from each recording, the studio is ready.`,
+  () => `If any of this is relevant, a short reply is enough and I can send a matching example.`,
+  () => `No pressure. If the timing is better later, the work is there when you need it.`,
+  () => `If you take a look, I would like to know what you think.`,
+  () => `If a site, product, or automation is on your list, I am happy to talk through it.`,
+  () => `One project is usually enough to see whether we are a fit.`,
+  () => `I will leave this with you. If even one of those four areas is relevant, it was worth sending.`,
+  () => `Appreciate you reading this.`,
+  () => `If a rebuild or an internal workflow is still taking too long, I can help.`,
+  () => `No need to reply if this is not useful. Thanks for your time either way.`,
+  () => `Hope this is useful for something you have been meaning to ship.`,
+  () => `If you want, I can share one live project closest to what you need.`,
   () => `If timing is off right now, no worries at all.`,
-  () => `Thanks for considering it. Happy to answer anything if useful.`,
-  () => `Curious what your latest video would look like once clips and posts are pulled from it.`,
-  () => `More platforms from the same filming time is the outcome we aim for.`,
-  () => `Thanks again for your time — hope this makes the next upload lighter.`,
-  () => `I will leave the link with you in case it helps your channel this month.`,
+  () => `Thanks for reading. Happy to answer anything if useful.`,
+  () => `Curious what one unfinished item would look like if it actually shipped.`,
+  () => `Thanks again for your time.`,
+  () => `I will leave the link with you in case it helps this month.`,
+  () => `If this is useful, just reply and tell me what you are trying to ship.`,
+  () => `Happy to keep this short. A reply with one sentence is plenty.`,
+  () => `If nothing here fits, feel free to ignore this.`,
+  () => `Thanks for considering it.`,
 ];
 
 const NAME_ONLY_SUBJECTS = [
-  (f) => `${f}, quick note on your content workflow`,
-  (f) => `${f} — after you publish a long video`,
-  (f) => `Quick idea for your channel, ${f}`,
-  (f) => `${f}, thought this may help your uploads`,
-  (f) => `${f}: one video, more usable content`,
-  (f) => `${f}, about clips and posts after upload`,
-  (f) => `A note for creators like you, ${f}`,
-  (f) => `${f} — making long videos work harder`,
-  (f) => `${f}, question on your video workflow`,
-  (f) => `Idea for you, ${f}`,
-  (f) => `${f}, on reusing the videos you already make`,
-  (f) => `${f} — short note from Clipzy`,
-  (f) => `${f}, may be useful for your next upload`,
-  (f) => `${f}: content workflow note`,
+  (f) => `${f}, a thought on your next build`,
+  (f) => `${f}, wanted to introduce myself`,
+  (f) => `${f}, question on your product`,
+  (f) => `${f}, thought this might help`,
+  (f) => `${f}, about shipping your software`,
+  (f) => `${f}, a note from Abdullah`,
+  (f) => `${f}, on getting work live`,
+  (f) => `${f}, may be useful for your team`,
   (f) => `${f}, hope this is relevant`,
-  (f) => `${f} — less work after you hit publish`,
-  (f) => `Hi ${f}, quick creator note`,
-  (f) => `${f}, about your post-publish workflow`,
-  (f) => `${f} — one practical content idea`,
-  (f) => `${f}, wanted to share this with you`,
+  (f) => `${f}, wanted to share this`,
+  (f) => `${f}, about your site or product`,
+  (f) => `${f}, a short note`,
+  (f) => `${f}, thought of your backlog`,
+  (f) => `${f}, on your next project`,
+  (f) => `${f}, a builder note`,
+  (f) => `Hey ${f}`,
+  (f) => `${f}, about a web or AI build`,
+  (f) => `${f}, one practical thought`,
+  (f) => `${f}, wanted to reach out`,
+  (f) => `${f}, for when you need a builder`,
 ];
 
 const FOLLOW_UP_SUBJECTS = [
-  (f) => `${f}, following up on my earlier note`,
-  (f) => `Quick follow-up, ${f}`,
+  (f) => `${f}, following up`,
+  (f) => `${f}, looping back once`,
   (f) => `${f}, did my last note come through?`,
-  (f) => `${f} — one more note on Clipzy`,
-  (f) => `Re: your content workflow, ${f}`,
+  (f) => `${f}, one more note`,
+  (f) => `Re: my earlier note, ${f}`,
 ];
 
 const FOLLOW_UP_OPENERS = [
-  () => `Just looping back once in case my first note got buried under other mail.`,
-  () => `Sending a short follow-up — no need to reply if the timing is not right.`,
-  () => `One more brief note from me on this, then I will leave it with you.`,
-  () => `Wanted to bump this once because the time-save usually shows up on the first real video.`,
+  () => `Just looping back once in case my first note got buried.`,
+  () => `Sending a short follow-up. No need to reply if the timing is not right.`,
+  () => `One more brief note from me, then I will leave it with you.`,
+  () => `Wanted to bump this once in case it was easy to miss.`,
 ];
 
 function generatePersonalizedOpener(contact) {
   const first = firstName(contact);
   const email = contact.email || first;
-  const channel = channelName(contact);
+  const company = companyName(contact);
   const snippet = profileSnippet(contact.company_profile, 90);
+  const fit = detectServiceFit(contact);
+  const phrase = servicePhrase(fit);
   const isFollowUp = contact._is_follow_up === true;
 
   if (isFollowUp) {
     return pickVariant(email + '|fu-opener', FOLLOW_UP_OPENERS.map((fn) => fn()));
   }
 
-  if (channel) {
+  if (company) {
     const rich = [
-      `I came across ${channel} and wanted to reach out about the work that usually happens after each upload.`,
-      `Your work around ${channel} stood out, so I thought a personal note made sense.`,
-      `I wanted to share something that may help with clips, captions, and posts around ${channel}.`,
-      `Creators behind channels like ${channel} often spend more time repurposing content than filming it.`,
+      `I came across ${company} and wanted to reach out about ${phrase}.`,
+      `Your work around ${company} stood out, so I thought a personal note made sense.`,
+      `I wanted to share something that may help ${company} with ${phrase}.`,
+      `Teams like ${company} often have a site, a product, or a manual process that still needs a builder.`,
     ];
     if (snippet) {
-      rich.push(`Noticed ${channel}'s focus — ${snippet} That kind of content usually has strong short-form moments.`);
+      rich.push(`Noticed ${possessive(company)} focus: ${snippet} That usually needs a solid web layer, automation, or an AI feature on top.`);
+    }
+    if (fit === 'ai') {
+      rich.push(`I saw ${company} in a space where AI can help, so I wanted to mention the production systems I have already shipped.`);
+    } else if (fit === 'saas') {
+      rich.push(`${company} looks like a product business, so I thought a note about shipping software without a full engineering team might help.`);
+    } else if (fit === 'automation') {
+      rich.push(`If ${company} still has work living in spreadsheets or repeatable handoffs, Python automation is usually the fastest place to start.`);
+    } else if (fit === 'fullstack') {
+      rich.push(`If ${company} needs a site or app that stays maintainable, that is the full-stack work I take on.`);
     }
     return pickVariant(email + '|opener-rich', rich);
   }
@@ -162,14 +209,14 @@ function generatePersonalizedOpener(contact) {
 function generatePersonalizedClosing(contact) {
   const first = firstName(contact);
   const email = contact.email || first;
-  const channel = channelName(contact);
+  const company = companyName(contact);
 
-  if (channel) {
-    return pickVariant(email + '|close-channel', [
-      `If this helps ${channel}, start with one recent upload and see how the workflow feels.`,
-      `Happy to hear what you think if you try it with a ${channel} video.`,
-      `No rush — sharing in case it fits the way ${channel} already creates content.`,
-      `Appreciate your time either way, and hope this is useful for ${channel}.`,
+  if (company) {
+    return pickVariant(email + '|close-company', [
+      `If this helps ${company}, a short reply is enough and we can start from one project.`,
+      `Happy to hear what you think if you look at the live work with ${company} in mind.`,
+      `No rush. Sharing in case it fits how ${company} already builds software.`,
+      `Appreciate your time either way, and hope this is useful for ${company}.`,
     ]);
   }
 
@@ -179,22 +226,22 @@ function generatePersonalizedClosing(contact) {
 function generatePersonalizedSubject(contact) {
   const first = firstName(contact);
   const email = contact.email || first;
-  const channel = channelName(contact);
+  const company = companyName(contact);
   const isFollowUp = contact._is_follow_up === true;
 
   if (isFollowUp) {
     return pickVariant(email + '|fu-subject', FOLLOW_UP_SUBJECTS.map((fn) => fn(first)));
   }
 
-  if (channel) {
+  if (company) {
     const subjects = [
-      `${first}, quick note about ${channel}`,
-      `${first} — thought on the ${channel} workflow`,
-      `Idea for ${channel}, ${first}`,
-      `${first}, about content after ${channel} uploads`,
-      `${first}: short note on ${channel}`,
+      `${first}, a thought on ${company}`,
+      `${first}, about ${company}`,
+      `${first}, note for ${company}`,
+      `${first}, wanted to reach out`,
+      `${first}, ${company} and a possible build`,
     ].filter((s) => s.length <= 60);
-    return pickVariant(email + '|subject-channel', subjects);
+    return pickVariant(email + '|subject-company', subjects);
   }
 
   return pickVariant(email + '|subject', NAME_ONLY_SUBJECTS.map((fn) => fn(first)));
@@ -204,7 +251,8 @@ module.exports = {
   generatePersonalizedOpener,
   generatePersonalizedClosing,
   generatePersonalizedSubject,
-  detectCreatorType,
-  detectRoleType: detectCreatorType,
+  detectServiceFit,
+  detectCreatorType: detectServiceFit,
+  detectRoleType: detectServiceFit,
   SITE_URL,
 };

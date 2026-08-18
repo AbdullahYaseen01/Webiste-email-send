@@ -15,14 +15,14 @@ function htmlToPlain(html) {
     .trim();
 }
 
-function wrapHtmlEmail(htmlBody, { preheader = '', fromEmail = '' } = {}) {
-  // Standard email style (sans-serif) — looks like a normal inbox message
+function wrapHtmlEmail(htmlBody, { preheader = '', fromEmail = '', includeUnsubscribe = false } = {}) {
+  // Keep this looking like a normal 1-to-1 message. Bulk footers hurt inbox placement.
   void preheader;
-  const footer = fromEmail
+  const footer = includeUnsubscribe && fromEmail
     ? `<p style="margin:18px 0 0;font-size:12px;color:#666;font-family:Arial,Helvetica,sans-serif;">If this is not useful, just reply and I will not follow up.</p>`
     : '';
 
-  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#222222;">${htmlBody}${footer}</div>`;
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#222222;">${htmlBody}${footer}</div>`;
 }
 
 const SPAM_WORDS = [
@@ -84,7 +84,7 @@ function validateCampaign({ subject, bodyHtml, preheader = '' }) {
   // Allow a few product-emphasis bolds; more than 4 starts to look promotional
   if (strongCount > 4) warnings.push('Too much bold text — plain emails look more personal');
 
-  const capsWords = (plain.match(/\b[A-Z]{2,}\b/g) || []).filter(w => !['AI', 'API', 'AWS', 'BLE', 'CAN', 'C', 'GSM', 'HTTP', 'HTTPS', 'I2C', 'IoT', 'ML', 'MQTT', 'OCR', 'OTA', 'REST', 'SPI', 'SQL', 'TCP', 'UART', 'USB', 'VP', 'CTO', 'CEO'].includes(w));
+  const capsWords = (plain.match(/\b[A-Z]{2,}\b/g) || []).filter(w => !['AI', 'API', 'AWS', 'BLE', 'CAN', 'C', 'CSS', 'GSM', 'HTML', 'HTTP', 'HTTPS', 'I2C', 'IoT', 'LLM', 'ML', 'MQTT', 'NLP', 'OCR', 'OTA', 'REST', 'SPI', 'SQL', 'TCP', 'UART', 'USB', 'VP', 'CTO', 'CEO'].includes(w));
   if (capsWords.length > 8) warnings.push('Too many ALL CAPS words in body — keep acronyms only where needed');
 
   const imageCount = (bodyHtml.match(/<img\s/gi) || []).length;

@@ -181,9 +181,10 @@ function loadAccounts() {
   const usedEmails = new Set();
 
   const envAccounts = loadEnvAccounts().filter(a => {
+    if (disabled.has(a.id)) return false;
     usedListIds.add(a.listId);
     usedEmails.add(a.email.toLowerCase());
-    return !disabled.has(a.id);
+    return true;
   });
 
   const savedAccounts = loadSavedAccounts(usedListIds, usedEmails).filter(a => !disabled.has(a.id));

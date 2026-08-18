@@ -8,6 +8,10 @@ attachments/
 reachly.log
 .vercel
 
+# Local SMTP env helpers (contain mailbox passwords — never commit)
+scripts/set-vercel-smtp.js
+scripts/set-vercel-smtp-prod.js
+
 # Contact CSV data (never commit PII lists)
 *.csv
 cleaned_splits/
