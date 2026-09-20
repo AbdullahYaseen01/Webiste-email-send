@@ -3,6 +3,7 @@ const express = require('express');
 const multer = require('multer');
 const { parseContactsCsv, parseContactsXlsx } = require('./src/import-contacts');
 const { getTemplate, listTemplates, buildFollowUpHtml, normalizeCalendarUrl } = require('./src/campaign-templates');
+const { firstNameFromEmail } = require('./src/personalize-opener');
 const path = require('path');
 const fs = require('fs');
 const cron = require('node-cron');
@@ -10,7 +11,7 @@ const cron = require('node-cron');
 const { uploadsDir, attachmentsDir, isServerless } = require('./src/paths');
 const store = require('./src/store');
 const {
-  getAccounts, getAccount, getAccountByList, resetAccountsCache, DEFAULT_DAILY, DEFAULT_DELAY,
+  getAccounts, getAccount, getAccountByList, getPreferredTestAccount, getSendableAccounts, resolveTestAccountId, resetAccountsCache, DEFAULT_DAILY, DEFAULT_DELAY,
 } = require('./src/accounts');
 const { validateCampaign, htmlToPlain } = require('./src/email-utils');
 const {
@@ -26,6 +27,8 @@ const {
   resetDailyState,
   sendTestEmail,
   renderPreview,
+  personalize,
+  unsubscribeToken,
   verifyCustomSmtp,
   sendTestWithCustomConfig,
   DAILY_LIMIT,
@@ -100,6 +103,22 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ success: true });
 });
 
+function handleUnsubscribe(req, res) {
+  const email = String(req.query.e || req.body?.email || '').trim();
+  const token = String(req.query.t || req.body?.t || '').trim();
+  if (!email || !email.includes('@') || token !== unsubscribeToken(email)) {
+    return res.status(400).send('This unsubscribe link is not valid.');
+  }
+  store.suppressByEmail(email, 'unsubscribed', 'Recipient unsubscribed');
+  scheduleBackground(store.flushPersist());
+  res.status(200).type('html').send(
+    '<p>You will not receive more emails from this sender.</p>'
+  );
+}
+
+app.get('/api/unsubscribe', handleUnsubscribe);
+app.post('/api/unsubscribe', handleUnsubscribe);
+
 app.use(requireAuth);
 
 app.post('/api/campaigns/validate', (req, res) => {
@@ -138,7 +157,7 @@ app.post('/api/accounts/connect', async (req, res) => {
     const email = (req.body.email || '').trim();
     const pass = (req.body.pass || req.body.password || '').trim();
     const label = (req.body.label || '').trim();
-    const fromName = (req.body.fromName || process.env.SMTP_FROM_NAME || 'The Clipzy Team').trim();
+    const fromName = (req.body.fromName || process.env.SMTP_FROM_NAME || 'Abdullah Yaseen').trim();
     const providerId = (req.body.provider || 'gmail').trim();
     const provider = getProvider(providerId);
 
@@ -233,6 +252,9 @@ app.delete('/api/accounts/:id', async (req, res) => {
     const acc = getAccount(id);
     const saved = store.getSavedSmtpAccountRaw(id);
 
+    if (acc?.source === 'env' || /^account[12]$/.test(String(id))) {
+      return res.status(400).json({ error: 'The Raahban inboxes stay connected' });
+    }
     if (saved) {
       store.deleteSavedSmtpAccount(id);
     } else if (acc?.source === 'env' || String(id).startsWith('account')) {
@@ -478,9 +500,7 @@ app.get('/api/campaigns/templates/:id', (req, res) => {
 app.post('/api/campaigns/test-email', attachmentUpload.single('attachment'), async (req, res) => {
   const { subject, body, preheader, include_unsubscribe, smtp_account_id, sample_contact, test_to } = req.body;
   const bodyContent = (body || '').trim();
-  const accountId = (!smtp_account_id || smtp_account_id === 'all')
-    ? (getAccounts()[0]?.id || 'account1')
-    : smtp_account_id;
+  const accountId = resolveTestAccountId(smtp_account_id);
 
   if (!subject || !bodyContent) {
     if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
@@ -513,14 +533,14 @@ app.post('/api/campaigns/test-email', attachmentUpload.single('attachment'), asy
     }
   }
 
-  if (!sample.first_name || !sample.company || !sample.title) {
-    return res.status(400).json({ error: 'Manual test requires first name, job title, and company' });
+  sample.email = sample.email || testTo;
+  if (!sample.first_name) {
+    sample.first_name = firstNameFromEmail(testTo) || 'there';
   }
 
   const first = sample.first_name;
   const last = sample.last_name || '';
   sample.name = sample.name || [first, last].filter(Boolean).join(' ');
-  sample.email = sample.email || testTo;
 
   try {
     resetTransporter(accountId);
@@ -533,12 +553,13 @@ app.post('/api/campaigns/test-email', attachmentUpload.single('attachment'), asy
       attachment,
     }, testTo, sample, accountId);
 
+    const who = [first, sample.title, sample.company].filter(Boolean).join(' · ') || first;
     res.json({
       success: true,
-      message: `Test sent from ${cfg.from} to ${testTo} as ${first} at ${sample.company}`,
+      message: `Test sent from ${cfg.from} to ${testTo} as ${who}`,
       sentTo: testTo,
       accountId,
-      personalizedAs: `${first}, ${sample.title} at ${sample.company}`,
+      personalizedAs: who,
     });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
@@ -666,10 +687,8 @@ app.post('/api/campaigns/:id/send', async (req, res) => {
   const accountId = campaign.smtp_account_id || 'account1';
   const listId = campaign.list_id || 'list1';
   const useAllAccounts = accountId === 'all';
-  const accounts = getAccounts().filter(a => a.email && a.pass);
-  const smtpAccountIds = useAllAccounts
-    ? accounts.map(a => a.id)
-    : [accountId];
+  const accounts = getSendableAccounts();
+  const smtpAccountIds = useAllAccounts ? accounts.map(a => a.id) : [accountId];
 
   if (useAllAccounts) {
     if (smtpAccountIds.length === 0) {

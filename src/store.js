@@ -1510,6 +1510,14 @@ function deleteSavedSmtpAccount(id) {
   });
 }
 
+function clearSavedSmtpAccounts() {
+  withStore((data) => {
+    if (!(data.meta?.saved_smtp_accounts || []).length) return;
+    data.meta = { ...(data.meta || {}), saved_smtp_accounts: [] };
+    scheduleSmtpSave([]);
+  });
+}
+
 function setAccountDisabled(accountId, disabled) {
   withStore((data) => {
     const set = new Set(data.meta?.disabled_account_ids || []);
@@ -1736,6 +1744,25 @@ function markBounce(email, reason = 'Delivery failed') {
   });
 }
 
+function suppressByEmail(email, status = 'unsubscribed', reason = 'Recipient unsubscribed') {
+  withStore((data) => {
+    const emailLower = String(email || '').toLowerCase();
+    const contact = data.contacts.find(c => c.email.toLowerCase() === emailLower);
+    if (contact) {
+      contact.status = status;
+      contact.failure_reason = reason;
+      contact.suppressed_at = now();
+    }
+    for (const q of data.send_queue) {
+      if (q.status === 'pending' && String(q.email || '').toLowerCase() === emailLower) {
+        q.status = 'failed';
+        q.error_message = reason;
+        q.failure_type = 'other';
+      }
+    }
+  });
+}
+
 module.exports = {
   getContacts, addContact, addContactsBulk, addContactsBulkSplit, deleteContact, deleteAllContacts,
   getActiveContactIds, getEligibleContactIds, getSuccessfulContactIds, getSentAccountForContact,
@@ -1751,8 +1778,8 @@ module.exports = {
   getTodaySentCount, getRemainingToday, getRecentLogs, getLast7Days, getCampaignStatusCounts,
   getMeta, setMeta, getCustomVariables, setCustomVariables, addCustomVariable, deleteCustomVariable,
   getLeadProviderKeys, getLeadProviderKey, setLeadProviderKey,
-  getSavedSmtpAccounts, saveSmtpAccount, getSavedSmtpAccountRaw, getAllSavedSmtpAccountsRaw, deleteSavedSmtpAccount,
+  getSavedSmtpAccounts, saveSmtpAccount, getSavedSmtpAccountRaw, getAllSavedSmtpAccountsRaw, deleteSavedSmtpAccount, clearSavedSmtpAccounts,
   setAccountDisabled, setAccountStopped, isAccountStoppedMeta,
-  getQueueProgress, resumeSendingCampaigns, getAnalytics, markReply, markBounce,
+  getQueueProgress, resumeSendingCampaigns, getAnalytics, markReply, markBounce, suppressByEmail,
   ensureFresh, flushPersist, persistSmtpAccountsNow, getStorageInfo,
 };

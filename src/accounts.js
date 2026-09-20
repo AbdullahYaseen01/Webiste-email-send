@@ -46,7 +46,7 @@ function buildAccount({
     email: email.trim(),
     pass: String(pass).replace(/\s/g, ''),
     from: email.trim(),
-    fromName: fromName || 'The Clipzy Team',
+    fromName: fromName || 'Abdullah Yaseen',
     dailyLimit,
     sendDelayMs,
     protected: !!isProtected,
@@ -90,8 +90,8 @@ function loadEnvAccounts() {
       email: user,
       pass,
       fromName: process.env[`SMTP_ACCOUNT_${i}_FROM_NAME`]
-        || process.env.SMTP_FROM_NAME
-        || 'The Clipzy Team',
+      || process.env.SMTP_FROM_NAME
+      || 'Abdullah Yaseen',
       host: process.env[`SMTP_ACCOUNT_${i}_HOST`] || process.env.SMTP_HOST || 'smtp.gmail.com',
       port: process.env[`SMTP_ACCOUNT_${i}_PORT`]
         ? parseInt(process.env[`SMTP_ACCOUNT_${i}_PORT`], 10)
@@ -107,9 +107,9 @@ function loadEnvAccounts() {
         process.env[`SMTP_ACCOUNT_${i}_DELAY_MS`] || String(DEFAULT_DELAY),
         10
       ),
-      protected: false,
+      protected: true,
       source: 'env',
-      removable: true,
+      removable: false,
     });
     if (account) accounts.push(account);
   }
@@ -155,7 +155,7 @@ function loadSavedAccounts(usedListIds, usedEmails) {
       listLabel: s.listLabel || `Data List ${String(listId).replace(/^list/, '')}`,
       email: s.email,
       pass: s.pass,
-      fromName: s.fromName || 'The Clipzy Team',
+      fromName: s.fromName || 'Abdullah Yaseen',
       host: s.host || 'smtp.gmail.com',
       port: s.port || 587,
       secure: !!s.secure,
@@ -176,19 +176,21 @@ function loadSavedAccounts(usedListIds, usedEmails) {
 let cachedAccounts = null;
 
 function loadAccounts() {
-  const { disabled } = getMetaFlags();
   const usedListIds = new Set();
   const usedEmails = new Set();
 
   const envAccounts = loadEnvAccounts().filter(a => {
-    if (disabled.has(a.id)) return false;
     usedListIds.add(a.listId);
     usedEmails.add(a.email.toLowerCase());
     return true;
   });
 
-  const savedAccounts = loadSavedAccounts(usedListIds, usedEmails).filter(a => !disabled.has(a.id));
-  return [...envAccounts, ...savedAccounts].slice(0, MAX_ACCOUNTS);
+  try {
+    const store = require('./store');
+    if (typeof store.clearSavedSmtpAccounts === 'function') store.clearSavedSmtpAccounts();
+  } catch { /* ignore */ }
+
+  return envAccounts.slice(0, MAX_ACCOUNTS);
 }
 
 function getAccounts() {
@@ -208,6 +210,23 @@ function getDefaultAccount() {
   return getAccounts()[0] || null;
 }
 
+function getSendableAccounts() {
+  return getAccounts().filter((a) => a.email && a.pass);
+}
+
+function getPreferredTestAccount() {
+  const accounts = getAccounts();
+  const raahban = accounts.find((a) => /^abdullah@raahban\.com$/i.test(a.email || ''))
+    || accounts.find((a) => /@raahban\.com$/i.test(a.email || ''));
+  if (raahban) return raahban;
+  const abdullah = accounts.find((a) => /^abdullah@/i.test(a.email || ''));
+  return abdullah || accounts[0] || null;
+}
+
+function resolveTestAccountId() {
+  return getPreferredTestAccount()?.id || 'account1';
+}
+
 function resetAccountsCache() {
   cachedAccounts = null;
 }
@@ -221,6 +240,9 @@ module.exports = {
   getAccount,
   getAccountByList,
   getDefaultAccount,
+  getSendableAccounts,
+  getPreferredTestAccount,
+  resolveTestAccountId,
   resetAccountsCache,
   isAccountStopped,
   MAX_ACCOUNTS,

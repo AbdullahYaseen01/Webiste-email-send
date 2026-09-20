@@ -18,23 +18,13 @@ function getDefaultAttachment() {
   return null;
 }
 
+/** Only attach a file the user chose. Auto-PDF on cold mail is a Gmail spam trigger. */
 function mergeAttachments(campaignAttachment) {
-  const attachments = [];
-  const resume = getDefaultAttachment();
-  if (resume) attachments.push(resume);
-
-  if (campaignAttachment?.path && fs.existsSync(campaignAttachment.path)) {
-    const samePath = resume && path.resolve(campaignAttachment.path) === path.resolve(resume.path);
-    const sameName = resume && String(campaignAttachment.filename || '').replace(/\s+/g, '_') === DEFAULT_RESUME_FILENAME;
-    if (!samePath && !sameName) {
-      attachments.push({
-        filename: campaignAttachment.filename,
-        path: campaignAttachment.path,
-      });
-    }
-  }
-
-  return attachments;
+  if (!campaignAttachment?.path || !fs.existsSync(campaignAttachment.path)) return [];
+  return [{
+    filename: campaignAttachment.filename || DEFAULT_RESUME_FILENAME,
+    path: campaignAttachment.path,
+  }];
 }
 
 module.exports = {

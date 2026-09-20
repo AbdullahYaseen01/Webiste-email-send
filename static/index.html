@@ -147,26 +147,32 @@
         <div class="card test-panel-card" id="dashboardTestPanel">
           <h2>Test Email During Campaign</h2>
           <p class="hint">Send a test anytime while the campaign is running. Uses the active campaign email content.</p>
+          <div class="alert warning" style="margin: 0.75rem 0;">
+            Same Gmail that already marked a sending domain as spam will keep new mail in Spam until you click Report not spam and test a different inbox.
+          </div>
           <div class="test-mode-tabs">
             <button type="button" class="list-tab active" data-test-panel="dashboard" data-test-mode="quick">Quick Test</button>
             <button type="button" class="list-tab" data-test-panel="dashboard" data-test-mode="manual">Manual Test</button>
           </div>
-          <p class="hint" id="dashQuickTestHint">Uses default sample contact (Alex Morgan, VP Engineering at Example Technologies).</p>
+          <p class="hint" id="dashQuickTestHint">Quick test greets you by name from your inbox. For a real-looking email, switch to Manual and fill a real job title and company. Prefer sending from abdullah@raahban.com.</p>
+          <div class="form-group">
+            <label>Send Test To</label>
+            <input type="email" id="dashTestTo" placeholder="your own inbox">
+          </div>
           <div id="dashManualTestFields" class="manual-test-fields hidden">
             <div class="form-row">
-              <div class="form-group"><label>First Name *</label><input type="text" id="dashTestFirstName" placeholder="Alex"></div>
-              <div class="form-group"><label>Last Name</label><input type="text" id="dashTestLastName" placeholder="Morgan"></div>
+              <div class="form-group"><label>First Name</label><input type="text" id="dashTestFirstName" placeholder="First name"></div>
+              <div class="form-group"><label>Last Name</label><input type="text" id="dashTestLastName" placeholder="Last name"></div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label>Job Title *</label><input type="text" id="dashTestTitle" placeholder="VP of Engineering"></div>
-              <div class="form-group"><label>Company *</label><input type="text" id="dashTestCompany" placeholder="Example Technologies"></div>
+              <div class="form-group"><label>Job Title</label><input type="text" id="dashTestTitle" placeholder="Founder, CTO, ..."></div>
+              <div class="form-group"><label>Company</label><input type="text" id="dashTestCompany" placeholder="Their real company"></div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label>City *</label><input type="text" id="dashTestCity" placeholder="San Francisco"></div>
-              <div class="form-group"><label>Industry</label><input type="text" id="dashTestIndustry" placeholder="Information Technology"></div>
+              <div class="form-group"><label>City</label><input type="text" id="dashTestCity" placeholder="City"></div>
+              <div class="form-group"><label>Industry</label><input type="text" id="dashTestIndustry" placeholder="Industry"></div>
             </div>
-            <div class="form-group"><label>Company Profile (for AI closing line)</label><textarea id="dashTestCompanyProfile" rows="2" placeholder="What the company builds..."></textarea></div>
-            <div class="form-group"><label>Send Test To</label><input type="email" id="dashTestTo" placeholder="ahmadjutt463@gmail.com"></div>
+            <div class="form-group"><label>Company Profile</label><textarea id="dashTestCompanyProfile" rows="2" placeholder="What the company builds..."></textarea></div>
           </div>
           <div class="form-actions">
             <button type="button" class="btn btn-primary" id="dashSendTestEmail">Send Test Email</button>
@@ -319,7 +325,7 @@
         <div class="card quickstart-card">
           <h2>3-Step Campaign</h2>
           <ol class="quickstart-steps">
-            <li id="step1"><strong>Select email account</strong> — pick All accounts so 5 inboxes split the work</li>
+            <li id="step1"><strong>Select email account</strong> — pick All accounts so both Raahban inboxes split the work</li>
             <li id="step2"><strong>Upload CSV</strong> — Contacts tab splits 1,000 emails evenly across all inboxes</li>
             <li id="step3"><strong>Preview → Test → Send</strong> — if one inbox hits its daily limit, remaining mail moves to the next</li>
           </ol>
@@ -419,7 +425,7 @@
                     📎 Extra file (optional)
                     <input type="file" id="campaignAttachment" accept=".pdf,.doc,.docx" hidden>
                   </label>
-                  <span class="hint" id="attachmentName">Resume is attached automatically on every email</span>
+                  <span class="hint" id="attachmentName">Leave empty for inbox placement — PDFs on cold mail often go to spam</span>
                 </div>
 
                 <div class="compose-options">
@@ -438,32 +444,38 @@
             <div class="card test-panel-card">
               <h2>Test Email</h2>
               <p class="hint">Works before or during a campaign. Campaign keeps sending while you test.</p>
+              <div class="alert warning" style="margin: 0.75rem 0;">
+                Tests send from <strong>abdullah@raahban.com</strong>. Use a Gmail that has not already marked this sending domain as spam.
+              </div>
               <div class="test-mode-tabs">
                 <button type="button" class="list-tab active" data-test-panel="compose" data-test-mode="quick">Quick Test</button>
                 <button type="button" class="list-tab" data-test-panel="compose" data-test-mode="manual">Manual Test</button>
               </div>
-              <p class="hint" id="composeQuickTestHint">Uses sample: Alex Morgan, VP Engineering at Example Technologies.</p>
+              <p class="hint" id="composeQuickTestHint">Quick test greets you by name from your inbox. For a real-looking email, switch to Manual and fill a real job title and company. Prefer sending from abdullah@raahban.com.</p>
+              <div class="form-group">
+                <label>Send Test To</label>
+                <input type="email" id="testTo" placeholder="your own inbox">
+              </div>
               <div id="composeManualTestFields" class="manual-test-fields hidden">
                 <div class="form-row">
-                  <div class="form-group"><label>First Name *</label><input type="text" id="testFirstName" placeholder="Alex"></div>
-                  <div class="form-group"><label>Last Name</label><input type="text" id="testLastName" placeholder="Morgan"></div>
+                  <div class="form-group"><label>First Name</label><input type="text" id="testFirstName" placeholder="First name"></div>
+                  <div class="form-group"><label>Last Name</label><input type="text" id="testLastName" placeholder="Last name"></div>
                 </div>
                 <div class="form-row">
-                  <div class="form-group"><label>Job Title *</label><input type="text" id="testTitle" placeholder="VP of Engineering"></div>
-                  <div class="form-group"><label>Company *</label><input type="text" id="testCompany" placeholder="Example Technologies"></div>
+                  <div class="form-group"><label>Job Title</label><input type="text" id="testTitle" placeholder="Founder, CTO, ..."></div>
+                  <div class="form-group"><label>Company</label><input type="text" id="testCompany" placeholder="Their real company"></div>
                 </div>
                 <div class="form-row">
-                  <div class="form-group"><label>City *</label><input type="text" id="testCity" placeholder="San Francisco"></div>
-                  <div class="form-group"><label>Industry</label><input type="text" id="testIndustry" placeholder="Information Technology"></div>
+                  <div class="form-group"><label>City</label><input type="text" id="testCity" placeholder="City"></div>
+                  <div class="form-group"><label>Industry</label><input type="text" id="testIndustry" placeholder="Industry"></div>
                 </div>
-                <div class="form-group"><label>Company Profile (for AI closing line)</label><textarea id="testCompanyProfile" rows="2" placeholder="What the company builds..."></textarea></div>
-                <div class="form-group"><label>Send Test To</label><input type="email" id="testTo" placeholder="ahmadjutt463@gmail.com"></div>
+                <div class="form-group"><label>Company Profile</label><textarea id="testCompanyProfile" rows="2" placeholder="What the company builds..."></textarea></div>
               </div>
               <div class="form-actions">
                 <button type="button" class="btn btn-primary" id="sendTestEmail">Send Test Email</button>
                 <button type="button" class="btn btn-sm" id="previewManualTest">Preview with These Fields</button>
               </div>
-              <p class="test-email-hint">Sends from selected Gmail account (default: <strong>ahmadrandhawa01@gmail.com</strong>)</p>
+              <p class="test-email-hint">Tests always send from <strong>abdullah@raahban.com</strong>.</p>
             </div>
           </div>
 
@@ -867,7 +879,7 @@
   <div class="toast-container" id="toasts"></div>
 
   <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
-  <script src="/js/app.js?v=23"></script>
+  <script src="/js/app.js?v=27"></script>
   <script src="/js/features.js?v=3"></script>
 </body>
 </html>

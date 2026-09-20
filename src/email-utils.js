@@ -15,14 +15,27 @@ function htmlToPlain(html) {
     .trim();
 }
 
-function wrapHtmlEmail(htmlBody, { preheader = '', fromEmail = '', includeUnsubscribe = false } = {}) {
-  // Keep this looking like a normal 1-to-1 message. Bulk footers hurt inbox placement.
-  void preheader;
-  const footer = includeUnsubscribe && fromEmail
-    ? `<p style="margin:18px 0 0;font-size:12px;color:#666;font-family:Arial,Helvetica,sans-serif;">If this is not useful, just reply and I will not follow up.</p>`
-    : '';
+function textToGmailHtml(text) {
+  const escape = (s) => String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const face = 'font-family:Arial,Helvetica,sans-serif;font-size:small;color:#000000';
+  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+  const inner = lines.map((line) => (
+    line === ''
+      ? `<div style="${face}"><br></div>`
+      : `<div style="${face}">${escape(line)}</div>`
+  )).join('');
+  return `<div dir="ltr" style="${face}">${inner}</div>`;
+}
 
-  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#222222;">${htmlBody}${footer}</div>`;
+function textToQuietHtml(text) {
+  return textToGmailHtml(text);
+}
+
+function wrapHtmlEmail(htmlBody) {
+  return htmlBody || '';
 }
 
 const SPAM_WORDS = [
@@ -64,6 +77,9 @@ function validateCampaign({ subject, bodyHtml, preheader = '' }) {
     if (subject.length > 60) warnings.push('Subject is longer than 60 characters — shorter subjects land better in inbox');
     if (subject === subject.toUpperCase() && subject.length > 10) {
       warnings.push('ALL CAPS subject triggers spam filters — use normal capitalization');
+    }
+    if (/^(hey|hi|hello|yo)[\s!.]*$/i.test(subject.trim())) {
+      warnings.push('One-word greeting subjects like "hey" often land in Gmail spam');
     }
     if (/!{1,}/.test(subject)) warnings.push('Exclamation marks in the subject look promotional');
     if ((subject.match(/\(/g) || []).length >= 2) {
@@ -200,4 +216,4 @@ function classifySmtpError(err) {
   return { type: 'permanent', retry: false, suppress: true, message: err.message || 'Send failed' };
 }
 
-module.exports = { htmlToPlain, wrapHtmlEmail, validateCampaign, classifySmtpError };
+module.exports = { htmlToPlain, wrapHtmlEmail, textToQuietHtml, textToGmailHtml, validateCampaign, classifySmtpError };

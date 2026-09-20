@@ -868,10 +868,35 @@ let templateLoaded = false;
 let previewSampleContact = null;
 const testModes = { compose: 'quick', dashboard: 'quick' };
 
+function firstNameFromEmail(email) {
+  const local = String(email || '').split('@')[0] || '';
+  const token = local.split(/[._+\-]/)[0].replace(/\d+/g, '');
+  if (token.length >= 2 && /^[a-zA-Z]+$/.test(token)) {
+    return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+  }
+  return 'there';
+}
+
+function getTestTo(panel) {
+  const isDash = panel === 'dashboard';
+  return (document.getElementById(isDash ? 'dashTestTo' : 'testTo')?.value || '').trim();
+}
+
+function preferredTestAccountId() {
+  const raahban = accountsData.find((a) => /^abdullah@raahban\.com$/i.test(a.email || ''))
+    || accountsData.find((a) => /@raahban\.com$/i.test(a.email || ''));
+  if (raahban) return raahban.id;
+  const abdullah = accountsData.find((a) => /^abdullah@/i.test(a.email || ''));
+  return abdullah?.id || accountsData[0]?.id || 'account1';
+}
+
+const BURNED_TEST_INBOXES = ['ahmadjutt463@gmail.com'];
+
 function readManualContact(panel) {
   const id = (name) => (document.getElementById(name)?.value || '').trim();
   const isDash = panel === 'dashboard';
-  const first = id(isDash ? 'dashTestFirstName' : 'testFirstName');
+  const testTo = getTestTo(panel);
+  const first = id(isDash ? 'dashTestFirstName' : 'testFirstName') || firstNameFromEmail(testTo);
   const last = id(isDash ? 'dashTestLastName' : 'testLastName');
   return {
     first_name: first,
@@ -882,25 +907,30 @@ function readManualContact(panel) {
     city: id(isDash ? 'dashTestCity' : 'testCity'),
     industry: id(isDash ? 'dashTestIndustry' : 'testIndustry'),
     company_profile: id(isDash ? 'dashTestCompanyProfile' : 'testCompanyProfile'),
-    email: id(isDash ? 'dashTestTo' : 'testTo') || 'ahmadjutt463@gmail.com',
+    email: testTo,
   };
 }
 
 function getTestSampleContact(panel) {
+  const testTo = getTestTo(panel);
+  if (!testTo) throw new Error('Enter Send Test To');
   if (testModes[panel] === 'manual') {
-    const c = readManualContact(panel);
-    if (!c.first_name || !c.title || !c.company) {
-      throw new Error('Fill in First Name, Job Title, and Company for manual test');
-    }
-    if (!c.city) throw new Error('City is required for timezone line in email');
-    return c;
+    return readManualContact(panel);
   }
-  return previewSampleContact || {
-    first_name: 'Alex', last_name: 'Morgan', name: 'Alex Morgan',
-    title: 'VP of Engineering', company: 'Example Technologies',
-    city: 'San Francisco', industry: 'Information Technology',
-    company_profile: 'Example Technologies builds cloud-native analytics tools for mid-market SaaS companies.',
-    email: 'alex@example.com',
+  if (previewSampleContact && previewSampleContact.company) {
+    return { ...previewSampleContact, email: testTo };
+  }
+  const first = firstNameFromEmail(testTo);
+  return {
+    first_name: first,
+    last_name: '',
+    name: first,
+    title: 'CTO',
+    company: 'Everpay Corporation',
+    city: 'Miami',
+    industry: 'Financial Services',
+    company_profile: '',
+    email: testTo,
   };
 }
 
@@ -952,6 +982,18 @@ async function sendTestFromPanel(source) {
   const btnId = source === 'dashboard' ? 'dashSendTestEmail' : 'sendTestEmail';
   const btn = document.getElementById(btnId);
   const data = source === 'compose' ? getComposeFormData() : {};
+  const testTo = getTestTo(panel);
+  if (!testTo) {
+    toast('Enter a Send Test To address.', 'error');
+    return;
+  }
+  if (BURNED_TEST_INBOXES.includes(testTo.toLowerCase())) {
+    const ok = window.confirm(
+      'This Gmail may already treat this sending domain as spam. Click Report not spam, add abdullah@raahban.com to contacts, or test a different Gmail.\n\nSend to this same inbox anyway?'
+    );
+    if (!ok) return;
+  }
+
   const content = await getEmailContentForTest(source);
   const sample = getTestSampleContact(panel);
 
@@ -965,16 +1007,21 @@ async function sendTestFromPanel(source) {
     formData.append('body', content.body);
     formData.append('preheader', content.preheader || data.preheader || '');
     formData.append('include_unsubscribe', document.getElementById('includeUnsubscribe')?.checked ?? false);
-    formData.append('smtp_account_id', selectedAccountId || 'account2');
+    formData.append('smtp_account_id', preferredTestAccountId());
     formData.append('sample_contact', JSON.stringify(sample));
-    formData.append('test_to', sample.email);
+    formData.append('test_to', testTo);
     const attach = document.getElementById('campaignAttachment')?.files[0];
     if (attach) formData.append('attachment', attach);
 
     const res = await fetch('/api/campaigns/test-email', { method: 'POST', body: formData });
     const result = await res.json();
     if (!res.ok) throw new Error(result.message || result.error);
-    toast(result.message);
+    const to = result.sentTo || sample.email || '';
+    if (/@gmail\.com$/i.test(to)) {
+      toast(`${result.message}. If Gmail still puts it in Spam, open it and click Report not spam.`);
+    } else {
+      toast(result.message);
+    }
   } catch (err) {
     toast(err.message, 'error');
   } finally {
@@ -988,7 +1035,7 @@ async function previewWithManualFields() {
     const sample = getTestSampleContact('compose');
     previewSampleContact = sample;
     await updatePreview();
-    toast(`Preview updated for ${sample.first_name} at ${sample.company}`);
+    toast(`Preview updated for ${sample.first_name}${sample.company ? ` at ${sample.company}` : ''}`);
     showPage('compose');
   } catch (err) {
     toast(err.message, 'error');
@@ -1005,7 +1052,7 @@ async function dashPreviewTest() {
         subject: content.subject,
         body: content.body,
         preheader: content.preheader,
-        smtp_account_id: 'account2',
+        smtp_account_id: preferredTestAccountId(),
         sample_contact: sample,
       }),
     });
@@ -1027,7 +1074,7 @@ async function dashPreviewTest() {
     document.getElementById('testIndustry').value = sample.industry || '';
     document.getElementById('testCompanyProfile').value = sample.company_profile || '';
     document.getElementById('testTo').value = sample.email;
-    toast(`Preview loaded for ${sample.first_name} at ${sample.company}`);
+    toast(`Preview loaded for ${sample.first_name}${sample.company ? ` at ${sample.company}` : ''}`);
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -1048,7 +1095,6 @@ function fillManualTestDefaults(sample) {
     ['testCity', 'dashTestCity', sample.city],
     ['testIndustry', 'dashTestIndustry', sample.industry],
     ['testCompanyProfile', 'dashTestCompanyProfile', sample.company_profile],
-    ['testTo', 'dashTestTo', 'ahmadjutt463@gmail.com'],
   ];
   for (const [composeId, dashId, val] of fields) {
     if (val && document.getElementById(composeId)) document.getElementById(composeId).value = val;

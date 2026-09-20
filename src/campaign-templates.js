@@ -1,16 +1,14 @@
 const SITE_URL = 'https://abdullah-yaseen.vercel.app/';
 
-const SERVICES_LIST_HTML = `<p>The work I take on:</p>
-<ul style="margin:6px 0 16px 18px;padding:0;">
-<li style="margin:0 0 6px;"><b>Full-Stack Web Development</b></li>
-<li style="margin:0 0 6px;"><b>Python Automation</b></li>
-<li style="margin:0 0 6px;"><b>AI-Powered Solutions</b></li>
-<li style="margin:0;"><b>SaaS Development</b></li>
-</ul>`;
+const SERVICES_LIST_HTML = `<p>The work I take on:<br>
+• Full-Stack Web Development<br>
+• Python Automation<br>
+• AI-Powered Solutions<br>
+• SaaS Development</p>`;
 
 const DEFAULT_EMAIL = {
   id: 'default',
-  version: 32,
+  version: 39,
   name: 'Abdullah Yaseen — service outreach',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -18,17 +16,15 @@ const DEFAULT_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>I have 5+ years of experience shipping production software. That includes 30+ delivered projects, 8 live sites, and 12+ AI systems already in use.</p>
+<p>{{personalized_background}}</p>
 
 ${SERVICES_LIST_HTML}
 
-<p>Day to day I work in React, Next.js, JavaScript, Node.js, Express, Python, FastAPI, PostgreSQL, MongoDB, AWS, and Docker, including computer vision, chatbots, and LLM integrations when the product needs them.</p>
+<p>{{stack_line}}</p>
 
 <p>A few live examples are here:</p>
 
 <p>${SITE_URL}</p>
-
-<p>I attached my resume as well.</p>
 
 <p>{{personalized_closing}}</p>
 
@@ -36,24 +32,24 @@ ${SERVICES_LIST_HTML}
 Abdullah Yaseen</p>`,
   test_email: 'ahmadjutt463@gmail.com',
   sample_contact: {
-    first_name: 'Alex',
+    first_name: 'Richard',
     last_name: '',
-    name: 'Alex',
+    name: 'Richard',
     title: 'CTO',
-    company: 'Example Technologies',
+    company: 'Everpay Corporation',
     city: '',
     country: '',
     industry: '',
     company_profile: '',
     website: '',
     linkedin: '',
-    email: 'alex@example.com',
+    email: 'ahmadjutt463@gmail.com',
   },
 };
 
 const FOLLOW_UP_EMAIL = {
   id: 'follow-up',
-  version: 23,
+  version: 30,
   name: 'Abdullah Yaseen — Follow-up',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -61,39 +57,33 @@ const FOLLOW_UP_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>I have 5+ years of experience shipping this kind of work:</p>
-<ul style="margin:6px 0 16px 18px;padding:0;">
-<li style="margin:0 0 6px;"><b>Full-Stack Web Development</b></li>
-<li style="margin:0 0 6px;"><b>Python Automation</b></li>
-<li style="margin:0 0 6px;"><b>AI-Powered Solutions</b></li>
-<li style="margin:0;"><b>SaaS Development</b></li>
-</ul>
+<p>{{personalized_background}}</p>
 
-<p>React, Next.js, Node.js, Python, FastAPI, PostgreSQL, and AWS are the tools I ship with.</p>
+${SERVICES_LIST_HTML}
+
+<p>{{stack_line}}</p>
 
 <p>Live work is here:</p>
 
 <p>${SITE_URL}</p>
-
-<p>Resume is attached if a short background helps.</p>
 {{calendar_html}}
 <p>{{personalized_closing}}</p>
 
 <p>Thanks,<br>
 Abdullah Yaseen</p>`,
   sample_contact: {
-    first_name: 'Alex',
+    first_name: 'Richard',
     last_name: '',
-    name: 'Alex',
+    name: 'Richard',
     title: 'CTO',
-    company: 'Example Technologies',
+    company: 'Everpay Corporation',
     city: '',
     country: '',
     industry: '',
     company_profile: '',
     website: '',
     linkedin: '',
-    email: 'alex@example.com',
+    email: 'ahmadjutt463@gmail.com',
   },
 };
 

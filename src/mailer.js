@@ -3,11 +3,13 @@ const fs = require('fs');
 const crypto = require('crypto');
 const store = require('./store');
 const { getAccounts, getAccount, getDefaultAccount } = require('./accounts');
-const { htmlToPlain, wrapHtmlEmail, classifySmtpError } = require('./email-utils');
+const { htmlToPlain, textToGmailHtml, classifySmtpError } = require('./email-utils');
 const {
   generatePersonalizedOpener,
+  generatePersonalizedBackground,
   generatePersonalizedClosing,
   generatePersonalizedSubject,
+  generateStackLine,
 } = require('./personalize-opener');
 const { mergeAttachments } = require('./default-attachment');
 
@@ -113,8 +115,10 @@ function personalize(text, contact, extras = {}) {
     '{{location}}': location,
     '{{industry}}': ctx.industry || 'your industry',
     '{{personalized_opener}}': generatePersonalizedOpener(ctx),
+    '{{personalized_background}}': generatePersonalizedBackground(ctx),
     '{{personalized_closing}}': generatePersonalizedClosing(ctx),
     '{{personalized_subject}}': generatePersonalizedSubject(ctx),
+    '{{stack_line}}': generateStackLine(ctx),
   };
 
   for (const cv of store.getCustomVariables()) {
@@ -141,25 +145,19 @@ function buildEmailContent(campaign, contact, accountId) {
   };
   const subject = personalize(campaign.subject, contact, extras);
   const rawHtml = personalize(campaign.body_html, contact, extras);
-  const preheader = personalize(campaign.preheader || '', contact, extras);
-
-  // Always include a soft opt-out line — helps inbox trust on cold outreach
-  const html = wrapHtmlEmail(rawHtml, {
-    preheader,
-    fromEmail: cfg.from || true,
-    includeUnsubscribe: campaign.include_unsubscribe === true,
-  });
-
   const plainSource = campaign.body_text || htmlToPlain(rawHtml);
   const text = personalize(plainSource, contact, extras);
+  // Rebuild HTML from plain text so Gmail sees a 1-to-1 note, not a newsletter.
+  const html = textToGmailHtml(text);
 
   return { subject, html, text, cfg };
 }
 
 function renderPreview(campaign, sampleContact, accountId) {
   const contact = sampleContact || {
-    first_name: 'Alex', last_name: 'Morgan', name: 'Alex Morgan',
-    title: 'CTO', company: 'Example Technologies', email: 'alex@example.com',
+    first_name: 'Richard', last_name: '', name: 'Richard',
+    title: 'CTO', company: 'Everpay Corporation', city: 'Miami',
+    industry: 'Financial Services', email: 'ahmadjutt463@gmail.com',
   };
   const { subject, html, text, cfg } = buildEmailContent(campaign, contact, accountId);
   return {
@@ -233,28 +231,42 @@ function accountHasPendingWork(accountId) {
   return store.getPendingCount(accountId) > 0;
 }
 
+function publicAppUrl() {
+  if (process.env.PUBLIC_APP_URL) return process.env.PUBLIC_APP_URL.replace(/\/$/, '');
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.replace(/^https?:\/\//, '')}`;
+  }
+  return 'https://webiste-email-send.vercel.app';
+}
+
+function unsubscribeToken(email) {
+  return crypto
+    .createHmac('sha256', process.env.AUTH_SECRET || 'reachly')
+    .update(String(email || '').toLowerCase())
+    .digest('hex')
+    .slice(0, 20);
+}
+
+function jitterDelay(baseMs) {
+  const base = parseInt(baseMs, 10) || 20000;
+  const spread = Math.max(4000, Math.round(base * 0.4));
+  return base + Math.floor(Math.random() * (spread * 2 + 1)) - spread;
+}
+
 async function sendOneEmail(campaign, contact, accountId) {
   const cfg = getSmtpConfig(accountId);
   const t = getTransporter(accountId);
   const { subject, html, text } = buildEmailContent(campaign, contact, accountId);
 
   const mailOptions = {
-    from: `"${cfg.fromName}" <${cfg.from}>`,
-    replyTo: `"${cfg.fromName}" <${cfg.from}>`,
+    from: `${cfg.fromName} <${cfg.from}>`,
+    replyTo: cfg.from,
     to: contact.email,
     subject,
-    html,
     text,
-    headers: {
-      'Message-ID': `<${crypto.randomUUID()}@${cfg.from.split('@')[1] || 'mail.local'}>`,
-      'X-Auto-Response-Suppress': 'OOF, AutoReply',
-    },
+    html,
+    encoding: 'quoted-printable',
   };
-
-  if (campaign.include_unsubscribe === true) {
-    mailOptions.headers['List-Unsubscribe'] = `<mailto:${cfg.from}?subject=unsubscribe>`;
-    mailOptions.headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
-  }
 
   const attachments = mergeAttachments(campaign.attachment);
   if (attachments.length) mailOptions.attachments = attachments;
@@ -545,7 +557,7 @@ function scheduleAccountSender(accountId) {
       return;
     }
 
-    const delay = acc?.sendDelayMs || 20000;
+    const delay = jitterDelay(acc?.sendDelayMs || 20000);
     accountTimers[accountId] = setTimeout(tick, delay);
   };
 
@@ -619,7 +631,7 @@ async function runSenderTick({ force = false, maxPerAccount = null, maxMs = null
         processed += 1;
         // On Vercel skip long sleeps (cron/dashboard provides spacing). Local keeps delay.
         if (!isServerless && processed < perAccount && (Date.now() - started) < budgetMs) {
-          await sleep(acc.sendDelayMs || 20000);
+          await sleep(jitterDelay(acc.sendDelayMs || 20000));
         }
       } catch (err) {
         console.error(`[tick] ${acc.id} error:`, err.message);
@@ -871,5 +883,6 @@ module.exports = {
   sendTestEmail,
   renderPreview,
   personalize,
+  unsubscribeToken,
   DAILY_LIMIT,
 };
