@@ -330,7 +330,7 @@ function addContactsBulk(rows, listId = 'list1', { skipAlreadySent = true } = {}
     const batch = rows.slice(i, i + BATCH);
     const result = withStore((data) => {
       const sentEmails = skipAlreadySent
-        ? collectSentEmails(data, { listId: 'all', scope: 'hostinger' })
+        ? collectSentEmails(data, { listId: 'all', scope: 'all' })
         : new Set();
       let bAdded = 0, bSkipped = 0, bSkippedSent = 0;
       for (const row of batch) {
@@ -383,7 +383,7 @@ function addContactsBulkSplit(rows, listIds = ['list1'], { skipAlreadySent = tru
     const batch = rows.slice(i, i + BATCH);
     const result = withStore((data) => {
       const sentEmails = skipAlreadySent
-        ? collectSentEmails(data, { listId: 'all', scope: 'hostinger' })
+        ? collectSentEmails(data, { listId: 'all', scope: 'all' })
         : new Set();
       let bAdded = 0;
       let bSkipped = 0;
@@ -551,11 +551,11 @@ function collectSentEmails(data, {
 
 /** Addresses already delivered by Hostinger (safe to retry Gmail-only history). */
 function getGloballySentEmails() {
-  return withStoreRead((data) => collectSentEmails(data, { listId: 'all', scope: 'hostinger' }));
+  return withStoreRead((data) => collectSentEmails(data, { listId: 'all', scope: 'all' }));
 }
 
 function getSentEmailsForList(listId) {
-  return withStoreRead((data) => collectSentEmails(data, { listId, scope: 'hostinger' }));
+  return withStoreRead((data) => collectSentEmails(data, { listId, scope: 'all' }));
 }
 
 function getActiveContactIds(listId = null) {
@@ -569,10 +569,9 @@ function getActiveContactIds(listId = null) {
 function getEligibleContactIds(listId, { skipAlreadySent = true } = {}) {
   return withStoreRead((data) => {
     const allLists = !listId || listId === 'all';
-    // Skip only Hostinger-delivered addresses. Gmail-sent contacts may be retried
-    // from Hostinger after Gmail inboxes are removed/disabled.
+    // Skip any address that already received a successful send.
     const sentEmails = skipAlreadySent
-      ? collectSentEmails(data, { listId: 'all', scope: 'hostinger' })
+      ? collectSentEmails(data, { listId: 'all', scope: 'all' })
       : new Set();
     return data.contacts
       .filter(c => c.status === 'active' && (allLists || c.list_id === listId))
@@ -984,16 +983,14 @@ function queueCampaign(campaignId, contactIds, {
       if (alreadyQueued) continue;
 
       if (!isFollowUp) {
-        // Dedupe only Hostinger deliveries — Gmail-sent addresses may be retried
+        const emailKey = String(contact.email || '').toLowerCase();
         const alreadySent = data.send_log.some(l =>
-          l.status === 'sent'
-          && l.email
-          && l.email.toLowerCase() === contact.email.toLowerCase()
-          && wasSentViaNoResend(data, {
-            smtpAccountId: l.smtp_account_id,
-            listId: l.list_id,
-          })
-        );
+          l.status === 'sent' && l.email && l.email.toLowerCase() === emailKey
+        ) || data.send_queue.some(q => {
+          if (q.status !== 'sent') return false;
+          const qEmail = String(q.email || data.contacts.find(c => c.id === q.contact_id)?.email || '').toLowerCase();
+          return qEmail === emailKey;
+        });
         if (alreadySent) continue;
       } else {
         const alreadySentFollowUp = data.send_log.some(l =>
