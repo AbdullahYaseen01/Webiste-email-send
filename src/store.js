@@ -8,18 +8,23 @@ const {
   uploadSmtpAccounts,
   downloadAccountFlags,
   uploadAccountFlags,
+  downloadSentRegistry,
+  uploadSentRegistry,
   getPersistMode,
   hasKv,
 } = require('./kv-persist');
 
 const dbPath = path.join(dataDir, 'store.json');
 
+/** Daily quota day boundary — Pakistan by default (Raahban outreach). */
+const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Karachi';
+
 const empty = () => ({
   contacts: [],
   campaigns: [],
   send_queue: [],
   send_log: [],
-  meta: { userStoppedSender: false, lastDailyLimitAt: null, storeVersion: 0 },
+  meta: { userStoppedSender: false, lastDailyLimitAt: null, storeVersion: 0, sent_registry: {} },
   _counters: { contacts: 0, campaigns: 0, send_queue: 0, send_log: 0, replies: 0 },
   replies: [],
 });
@@ -30,6 +35,7 @@ let loadedAt = 0;
 let persistPromise = Promise.resolve();
 let smtpPersistPromise = Promise.resolve();
 let flagsPersistPromise = Promise.resolve();
+let sentPersistPromise = Promise.resolve();
 let hydrating = null;
 
 function applySmtpOverlay(data, smtpList) {
@@ -47,6 +53,108 @@ function applyFlagsOverlay(data, flags) {
   if (Array.isArray(flags.disabled)) data.meta.disabled_account_ids = flags.disabled;
   if (Array.isArray(flags.stopped)) data.meta.stopped_account_ids = flags.stopped;
   return data;
+}
+
+function applySentRegistryOverlay(data, registry) {
+  if (!data) return data;
+  if (!data.meta) data.meta = {};
+  if (registry && typeof registry === 'object' && !Array.isArray(registry)) {
+    data.meta.sent_registry = mergeSentRegistries(data.meta.sent_registry || {}, registry);
+  } else if (!data.meta.sent_registry) {
+    data.meta.sent_registry = {};
+  }
+  return data;
+}
+
+function mergeSentRegistries(a = {}, b = {}) {
+  const out = { ...a };
+  for (const [email, entry] of Object.entries(b || {})) {
+    const key = String(email || '').toLowerCase();
+    if (!key) continue;
+    const existing = out[key];
+    if (!existing) {
+      out[key] = {
+        accounts: { ...(entry.accounts || {}) },
+        firstSentAt: entry.firstSentAt || entry.lastSentAt || null,
+        lastSentAt: entry.lastSentAt || entry.firstSentAt || null,
+      };
+      continue;
+    }
+    const accounts = { ...(existing.accounts || {}), ...(entry.accounts || {}) };
+    const firstSentAt = [existing.firstSentAt, entry.firstSentAt, existing.lastSentAt, entry.lastSentAt]
+      .filter(Boolean)
+      .sort()[0] || null;
+    const lastSentAt = [existing.lastSentAt, entry.lastSentAt, existing.firstSentAt, entry.firstSentAt]
+      .filter(Boolean)
+      .sort()
+      .slice(-1)[0] || null;
+    out[key] = { accounts, firstSentAt, lastSentAt };
+  }
+  return out;
+}
+
+function recordSentInRegistry(data, email, accountId, sentAt = null) {
+  if (!data.meta) data.meta = {};
+  if (!data.meta.sent_registry || typeof data.meta.sent_registry !== 'object') {
+    data.meta.sent_registry = {};
+  }
+  const key = String(email || '').toLowerCase().trim();
+  if (!key || !key.includes('@')) return false;
+  const when = sentAt || now();
+  const acc = accountId || 'account1';
+  const existing = data.meta.sent_registry[key];
+  if (!existing) {
+    data.meta.sent_registry[key] = {
+      accounts: { [acc]: when },
+      firstSentAt: when,
+      lastSentAt: when,
+    };
+    return true;
+  }
+  existing.accounts = { ...(existing.accounts || {}), [acc]: when };
+  if (!existing.firstSentAt || when < existing.firstSentAt) existing.firstSentAt = when;
+  if (!existing.lastSentAt || when > existing.lastSentAt) existing.lastSentAt = when;
+  return true;
+}
+
+function rebuildSentRegistryFromLogs(data) {
+  if (!data.meta) data.meta = {};
+  let registry = data.meta.sent_registry && typeof data.meta.sent_registry === 'object'
+    ? { ...data.meta.sent_registry }
+    : {};
+
+  for (const log of data.send_log || []) {
+    if (log.status !== 'sent' || !log.email) continue;
+    const key = String(log.email).toLowerCase();
+    const when = log.sent_at || now();
+    const acc = log.smtp_account_id || 'account1';
+    const existing = registry[key];
+    if (!existing) {
+      registry[key] = { accounts: { [acc]: when }, firstSentAt: when, lastSentAt: when };
+    } else {
+      existing.accounts = { ...(existing.accounts || {}), [acc]: when };
+      if (!existing.firstSentAt || when < existing.firstSentAt) existing.firstSentAt = when;
+      if (!existing.lastSentAt || when > existing.lastSentAt) existing.lastSentAt = when;
+    }
+  }
+  for (const q of data.send_queue || []) {
+    if (q.status !== 'sent') continue;
+    const email = q.email || data.contacts.find(c => c.id === q.contact_id)?.email;
+    if (!email) continue;
+    const key = String(email).toLowerCase();
+    const when = q.sent_at || now();
+    const acc = q.smtp_account_id || 'account1';
+    const existing = registry[key];
+    if (!existing) {
+      registry[key] = { accounts: { [acc]: when }, firstSentAt: when, lastSentAt: when };
+    } else {
+      existing.accounts = { ...(existing.accounts || {}), [acc]: when };
+      if (!existing.firstSentAt || when < existing.firstSentAt) existing.firstSentAt = when;
+      if (!existing.lastSentAt || when > existing.lastSentAt) existing.lastSentAt = when;
+    }
+  }
+  data.meta.sent_registry = registry;
+  return registry;
 }
 
 function currentAccountFlags(data = memory) {
@@ -97,10 +205,11 @@ async function ensureFresh(force = false) {
 
   hydrating = (async () => {
     if (hasKv()) {
-      const [remote, smtpRemote, flagsRemote] = await Promise.all([
+      const [remote, smtpRemote, flagsRemote, sentRemote] = await Promise.all([
         downloadStore(),
         downloadSmtpAccounts(),
         downloadAccountFlags(),
+        downloadSentRegistry(),
       ]);
       if (remote) {
         const remoteVersion = remote.meta?.storeVersion || 0;
@@ -141,6 +250,19 @@ async function ensureFresh(force = false) {
         scheduleFlagsSave(currentAccountFlags(memory));
       }
 
+      // Durable sent registry always merges in (never lose "already mailed" set)
+      if (memory) {
+        const beforeSize = Object.keys(memory.meta?.sent_registry || {}).length;
+        rebuildSentRegistryFromLogs(memory);
+        applySentRegistryOverlay(memory, sentRemote);
+        const afterSize = Object.keys(memory.meta?.sent_registry || {}).length;
+        if (sentRemote == null && afterSize > 0) {
+          scheduleSentSave(memory.meta.sent_registry);
+        } else if (afterSize > beforeSize || (sentRemote && afterSize !== Object.keys(sentRemote).length)) {
+          scheduleSentSave(memory.meta.sent_registry);
+        }
+      }
+
       // Hostinger inboxes: daily limit 400 + IMAP Sent-folder defaults
       if (memory?.meta?.saved_smtp_accounts?.length) {
         let bumped = false;
@@ -165,6 +287,7 @@ async function ensureFresh(force = false) {
     } else if (!memory) {
       memory = loadFromFile() || empty();
       loadedVersion = memory.meta?.storeVersion || 0;
+      rebuildSentRegistryFromLogs(memory);
     }
     loadedAt = Date.now();
   })();
@@ -204,8 +327,16 @@ function scheduleFlagsSave(flags) {
     .catch((err) => console.error('[store] flags KV persist failed:', err.message));
 }
 
+function scheduleSentSave(registry) {
+  if (!hasKv()) return;
+  const snapshot = JSON.parse(JSON.stringify(registry || {}));
+  sentPersistPromise = sentPersistPromise
+    .then(() => uploadSentRegistry(snapshot))
+    .catch((err) => console.error('[store] sent registry KV persist failed:', err.message));
+}
+
 async function flushPersist() {
-  await Promise.all([persistPromise, smtpPersistPromise, flagsPersistPromise]);
+  await Promise.all([persistPromise, smtpPersistPromise, flagsPersistPromise, sentPersistPromise]);
 }
 
 async function persistSmtpAccountsNow(accounts) {
@@ -220,12 +351,18 @@ function getStorageInfo() {
     storeVersion: memory?.meta?.storeVersion || loadedVersion || 0,
     contacts: memory?.contacts?.length || 0,
     sendLog: memory?.send_log?.length || 0,
+    sentRegistry: Object.keys(memory?.meta?.sent_registry || {}).length,
     pendingQueue: memory?.send_queue?.filter(q => q.status === 'pending').length || 0,
     serverless: isServerless,
+    timezone: APP_TIMEZONE,
   };
 }
 
 function migrateData(data) {
+  if (!data.meta) data.meta = {};
+  if (!data.meta.sent_registry || typeof data.meta.sent_registry !== 'object') {
+    data.meta.sent_registry = {};
+  }
   for (const c of data.contacts) {
     if (!c.list_id) c.list_id = 'list1';
   }
@@ -238,6 +375,7 @@ function migrateData(data) {
     if (!log.list_id) log.list_id = 'list1';
     if (!log.failure_type && log.status === 'failed') log.failure_type = 'other';
   }
+  rebuildSentRegistryFromLogs(data);
   return data;
 }
 
@@ -257,7 +395,16 @@ function now() {
 }
 
 function todayLocal() {
-  return new Date().toLocaleDateString('en-CA');
+  return new Date().toLocaleDateString('en-CA', { timeZone: APP_TIMEZONE });
+}
+
+function dateInAppTz(isoOrDate) {
+  if (!isoOrDate) return '';
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+  if (Number.isNaN(d.getTime())) {
+    return String(isoOrDate).slice(0, 10);
+  }
+  return d.toLocaleDateString('en-CA', { timeZone: APP_TIMEZONE });
 }
 
 function nextId(data, table) {
@@ -397,7 +544,7 @@ function addContactsBulkSplit(rows, listIds = ['list1'], { skipAlreadySent = tru
           continue;
         }
         const emailLower = email.toLowerCase();
-        // Already delivered by Hostinger — do not re-import. Gmail-only history is allowed.
+        // Already emailed — do not re-import. Durable registry + send history.
         if (sentEmails.has(emailLower)) {
           bSkipped++;
           bSkippedSent++;
@@ -517,14 +664,37 @@ function collectSentEmails(data, {
   listId = null,
   /** 'hostinger' = only Hostinger-sent (Gmail-sent can be retried). 'all' = any inbox. */
   scope = 'hostinger',
+  /** When set, only treat as sent if THIS smtp account already mailed them. */
+  smtpAccountId = null,
 } = {}) {
   const sent = new Set();
   const allLists = !listId || listId === 'all';
   const filterHostinger = scope === 'hostinger';
+  const registry = data.meta?.sent_registry || {};
+
+  // Durable registry first — survives log clears / store races
+  for (const [email, entry] of Object.entries(registry)) {
+    if (!email || !entry) continue;
+    const accounts = entry.accounts || {};
+    if (smtpAccountId) {
+      if (accounts[smtpAccountId]) sent.add(email);
+      continue;
+    }
+    if (filterHostinger) {
+      const matched = Object.keys(accounts).some((accId) => wasSentViaNoResend(data, {
+        smtpAccountId: accId,
+        listId: null,
+      }));
+      if (matched) sent.add(email);
+    } else {
+      sent.add(email);
+    }
+  }
 
   for (const log of data.send_log) {
     if (log.status !== 'sent' || !log.email) continue;
     if (!allLists && log.list_id !== listId) continue;
+    if (smtpAccountId && log.smtp_account_id !== smtpAccountId) continue;
     if (filterHostinger && !wasSentViaNoResend(data, {
       smtpAccountId: log.smtp_account_id,
       listId: log.list_id,
@@ -533,6 +703,7 @@ function collectSentEmails(data, {
   }
   for (const q of data.send_queue) {
     if (q.status !== 'sent') continue;
+    if (smtpAccountId && q.smtp_account_id !== smtpAccountId) continue;
     if (filterHostinger && !wasSentViaNoResend(data, {
       smtpAccountId: q.smtp_account_id,
       listId: q.list_id,
@@ -900,7 +1071,11 @@ function clearSendingHistory() {
       queue: (data.send_queue || []).length,
       logs: (data.send_log || []).length,
       replies: (data.replies || []).length,
+      sentRegistry: Object.keys(data.meta?.sent_registry || {}).length,
     };
+    // Rebuild registry from logs BEFORE clearing so already-mailed set survives
+    rebuildSentRegistryFromLogs(data);
+    const keptRegistry = { ...(data.meta?.sent_registry || {}) };
     data.campaigns = [];
     data.send_queue = [];
     data.send_log = [];
@@ -917,7 +1092,10 @@ function clearSendingHistory() {
       userStoppedSender: true,
       lastDailyLimitAt: null,
       accountQuotas: {},
+      // Keep forever — CSV re-upload must not rematch these addresses
+      sent_registry: keptRegistry,
     };
+    scheduleSentSave(keptRegistry);
     return summary;
   });
 }
@@ -984,7 +1162,8 @@ function queueCampaign(campaignId, contactIds, {
 
       if (!isFollowUp) {
         const emailKey = String(contact.email || '').toLowerCase();
-        const alreadySent = data.send_log.some(l =>
+        const registryHit = Boolean(data.meta?.sent_registry?.[emailKey]);
+        const alreadySent = registryHit || data.send_log.some(l =>
           l.status === 'sent' && l.email && l.email.toLowerCase() === emailKey
         ) || data.send_queue.some(q => {
           if (q.status !== 'sent') return false;
@@ -1270,12 +1449,16 @@ function markSent(queueId, campaignId, contactId, email, meta = {}) {
     const q = data.send_queue.find(q => q.id === queueId);
     if (q) { q.status = 'sent'; q.sent_at = now(); }
     const contact = data.contacts.find(c => c.id === contactId);
+    const accountId = meta.smtp_account_id || q?.smtp_account_id || 'account1';
+    const sentAt = now();
     data.send_log.push({
       id: nextId(data, 'send_log'), campaign_id: campaignId, contact_id: contactId,
-      email, status: 'sent', error_message: null, sent_at: now(),
-      smtp_account_id: meta.smtp_account_id || q?.smtp_account_id || 'account1',
+      email, status: 'sent', error_message: null, sent_at: sentAt,
+      smtp_account_id: accountId,
       list_id: meta.list_id || q?.list_id || contact?.list_id || 'list1',
     });
+    recordSentInRegistry(data, email, accountId, sentAt);
+    scheduleSentSave(data.meta.sent_registry);
     const camp = data.campaigns.find(c => c.id === campaignId);
     if (camp) camp.sent_count++;
   });
@@ -1325,10 +1508,37 @@ function getTodaySentCount(accountId = null) {
   return withStoreRead((data) => {
     const today = todayLocal();
     return data.send_log.filter(l => {
-      if (l.status !== 'sent' || l.sent_at.slice(0, 10) !== today) return false;
+      if (l.status !== 'sent' || dateInAppTz(l.sent_at) !== today) return false;
       if (accountId) return l.smtp_account_id === accountId;
       return true;
     }).length;
+  });
+}
+
+function getAllTimeSentCount(accountId = null) {
+  return withStoreRead((data) => {
+    const registry = data.meta?.sent_registry || {};
+    if (accountId) {
+      let count = 0;
+      for (const entry of Object.values(registry)) {
+        if (entry?.accounts?.[accountId]) count += 1;
+      }
+      // Also count log-only sends that may not yet be in registry
+      const fromLogs = new Set(
+        data.send_log
+          .filter(l => l.status === 'sent' && l.smtp_account_id === accountId && l.email)
+          .map(l => String(l.email).toLowerCase())
+      );
+      for (const email of fromLogs) {
+        if (!registry[email]?.accounts?.[accountId]) count += 1;
+      }
+      return count;
+    }
+    const emails = new Set(Object.keys(registry));
+    for (const l of data.send_log) {
+      if (l.status === 'sent' && l.email) emails.add(String(l.email).toLowerCase());
+    }
+    return emails.size;
   });
 }
 
@@ -1354,7 +1564,7 @@ function getLast7Days() {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     for (const log of data.send_log) {
       if (log.status !== 'sent' || new Date(log.sent_at) < cutoff) continue;
-      const day = log.sent_at.slice(0, 10);
+      const day = dateInAppTz(log.sent_at);
       days[day] = (days[day] || 0) + 1;
     }
     return Object.entries(days).sort(([a], [b]) => a.localeCompare(b)).map(([day, sent]) => ({ day, sent }));
@@ -1653,8 +1863,9 @@ function getAnalytics() {
     const hourlyToday = Array.from({ length: 24 }, (_, h) => ({ hour: h, sent: 0, failed: 0 }));
     for (const log of logs) {
       const d = new Date(log.sent_at);
-      if (d.toLocaleDateString('en-CA') !== today) continue;
-      const h = d.getHours();
+      if (dateInAppTz(d) !== today) continue;
+      const hourStr = d.toLocaleString('en-US', { timeZone: APP_TIMEZONE, hour: 'numeric', hour12: false });
+      const h = Math.min(23, Math.max(0, parseInt(hourStr, 10) || 0));
       if (log.status === 'sent') hourlyToday[h].sent++;
       else if (log.status === 'failed') hourlyToday[h].failed++;
     }
@@ -1663,7 +1874,7 @@ function getAnalytics() {
     const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
     for (const log of logs) {
       if (new Date(log.sent_at) < cutoff) continue;
-      const day = log.sent_at.slice(0, 10);
+      const day = dateInAppTz(log.sent_at);
       if (!daily14[day]) daily14[day] = { day, sent: 0, failed: 0 };
       if (log.status === 'sent') daily14[day].sent++;
       else if (log.status === 'failed') daily14[day].failed++;
@@ -1688,8 +1899,10 @@ function getAnalytics() {
       completed_at: c.completed_at,
     })).sort((a, b) => b.id - a.id);
 
-    const todaySent = logs.filter(l => l.status === 'sent' && l.sent_at.slice(0, 10) === today).length;
-    const todayFailed = logs.filter(l => l.status === 'failed' && l.sent_at.slice(0, 10) === today).length;
+    const todaySent = logs.filter(l => l.status === 'sent' && dateInAppTz(l.sent_at) === today).length;
+    const todayFailed = logs.filter(l => l.status === 'failed' && dateInAppTz(l.sent_at) === today).length;
+    const allTimeUnique = Object.keys(data.meta?.sent_registry || {}).length
+      || new Set(logs.filter(l => l.status === 'sent' && l.email).map(l => String(l.email).toLowerCase())).size;
 
     const replies = data.replies || [];
 
@@ -1700,6 +1913,7 @@ function getAnalytics() {
         invalid: failureBreakdown.invalid || 0,
         rateLimited: failureBreakdown.rate_limited || 0,
         todaySent, todayFailed,
+        allTimeSent: allTimeUnique,
         replyCount: replies.length,
       },
       failureBreakdown,
@@ -1772,7 +1986,7 @@ module.exports = {
   deferBlockedQueueItems, getAccountQuotaState, setAccountQuotaState,
   pauseAllCampaigns, pauseCampaignsForAccount,
   markSent, markFailed, updateCampaignStatuses,
-  getTodaySentCount, getRemainingToday, getRecentLogs, getLast7Days, getCampaignStatusCounts,
+  getTodaySentCount, getAllTimeSentCount, getRemainingToday, getRecentLogs, getLast7Days, getCampaignStatusCounts,
   getMeta, setMeta, getCustomVariables, setCustomVariables, addCustomVariable, deleteCustomVariable,
   getLeadProviderKeys, getLeadProviderKey, setLeadProviderKey,
   getSavedSmtpAccounts, saveSmtpAccount, getSavedSmtpAccountRaw, getAllSavedSmtpAccountsRaw, deleteSavedSmtpAccount, clearSavedSmtpAccounts,

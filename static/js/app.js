@@ -125,7 +125,7 @@ function renderAccountQuotas(accounts) {
     return `<div class="sidebar-quota-item">
       <div class="sidebar-quota-label">${a.protected ? '🛡 ' : ''}${short}</div>
       <div class="quota-bar"><div class="quota-fill" style="width:${pct}%"></div></div>
-      <div class="quota-text">${a.todaySent} / ${a.dailyLimit}</div>
+      <div class="quota-text">${a.todaySent} / ${a.dailyLimit}${a.allTimeSent ? ` · ${a.allTimeSent} total` : ''}</div>
     </div>`;
   }).join('');
 }
@@ -152,7 +152,7 @@ function renderAccountCards(accounts) {
       </div>
       <div class="quota-bar" style="margin:8px 0"><div class="quota-fill" style="width:${pct}%"></div></div>
       <div style="font-size:0.85rem;color:var(--text-muted)">
-        ${a.todaySent}/${a.dailyLimit} today · ${a.remainingToday} left · ${a.sendDelayMs / 1000}s delay · ${escapeHtml(a.listLabel)}${a.pendingQueue ? ` · ${a.pendingQueue.toLocaleString()} queued` : ''}
+        ${a.todaySent}/${a.dailyLimit} today · ${(a.allTimeSent || 0).toLocaleString()} all-time · ${a.remainingToday} left · ${a.sendDelayMs / 1000}s delay · ${escapeHtml(a.listLabel)}${a.pendingQueue ? ` · ${a.pendingQueue.toLocaleString()} queued` : ''}
       </div>
       <div class="account-card-actions" data-account-id="${escapeHtml(a.id)}" data-account-email="${escapeHtml(a.email || '')}">
         ${stopped
@@ -400,7 +400,7 @@ async function loadDashboard() {
     accountsData = accounts;
     const o = analytics.overview;
 
-    document.getElementById('statTotalSent').textContent = o.sent.toLocaleString();
+    document.getElementById('statTotalSent').textContent = (o.allTimeSent || o.sent).toLocaleString();
     document.getElementById('statTotalFailed').textContent = o.failed.toLocaleString();
     document.getElementById('statPending').textContent = o.pending.toLocaleString();
     document.getElementById('statSuccessRate').textContent = `${o.successRate}%`;

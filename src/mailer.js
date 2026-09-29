@@ -748,8 +748,11 @@ function getAccountStatuses() {
   return getAccounts().map(acc => {
     const state = initAccountState(acc.id);
     const todaySent = store.getTodaySentCount(acc.id);
+    const allTimeSent = store.getAllTimeSentCount(acc.id);
     const remaining = store.getRemainingToday(acc.dailyLimit, acc.id);
-    const today = new Date().toLocaleDateString('en-CA');
+    const today = new Date().toLocaleDateString('en-CA', {
+      timeZone: process.env.APP_TIMEZONE || 'Asia/Karachi',
+    });
     const paused = isAccountPaused(acc.id);
     return {
       id: acc.id,
@@ -761,6 +764,7 @@ function getAccountStatuses() {
       dailyLimit: acc.dailyLimit,
       sendDelayMs: acc.sendDelayMs,
       todaySent,
+      allTimeSent,
       remainingToday: remaining,
       dailyQuotaHit: state.dailyQuotaHit && state.quotaHitDate === today,
       blocked: state.blockedUntil && Date.now() < state.blockedUntil,
